@@ -33,7 +33,17 @@ const INDEX_HTML = `<!DOCTYPE html>
  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
  .row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line)}
  .row:last-child{border-bottom:none}
- .tname{flex:1;min-width:0} .tname .f{font-weight:600} .tname .m{font-size:12px;color:var(--muted);margin-top:2px}
+ .tname{flex:1;min-width:0} .tname .f{font-weight:700;font-size:15px;letter-spacing:.2px} .tname .m{font-size:12px;color:var(--muted);margin-top:2px}
+ .fn{color:#7cc4ff} .ext{color:var(--muted);font-weight:400} .dir{color:#8b93a3;font-weight:400;font-size:12px}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+ .cell{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 11px;min-width:0}
+ .cell.mine{border-color:rgba(91,140,255,.5)} .cell.busy{border-color:rgba(255,107,107,.4)}
+ .cell .top{display:flex;align-items:center;gap:6px}
+ .cell .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:14px}
+ .cell .bot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}
+ .badge-sm{font-size:11px;font-weight:700;padding:3px 7px;border-radius:999px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+ .btn-sm{border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;white-space:nowrap}
+ .btn-sm:hover{border-color:#3a4150} .btn-sm.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
  .badge{font-size:12px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap}
  .b-free{color:var(--free);background:rgba(55,211,153,.12);border:1px solid rgba(55,211,153,.35)}
  .b-busy{color:var(--busy);background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.35)}
@@ -59,6 +69,19 @@ const INDEX_HTML = `<!DOCTYPE html>
 const $=s=>document.querySelector(s);
 let ME=null, POLL=null, SVN_LOADED=false;
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
+function fmtName(name){
+  name=String(name||"");
+  let dir="",file=name; const s=name.lastIndexOf("/");
+  if(s>=0){ dir=name.slice(0,s+1); file=name.slice(s+1); }
+  let base=file,ext=""; const d=file.lastIndexOf(".");
+  if(d>0){ base=file.slice(0,d); ext=file.slice(d); }
+  return (dir?\`<span class="dir">\${esc(dir)}</span>\`:"")+\`<span class="fn">\${esc(base)}</span><span class="ext">\${esc(ext)}</span>\`;
+}
+function fmtNameCell(name){ // 격자 셀용: 폴더는 빼고 파일명만(전체경로는 title로)
+  name=String(name||""); const s=name.lastIndexOf("/"); const file=s>=0?name.slice(s+1):name;
+  let base=file,ext=""; const d=file.lastIndexOf("."); if(d>0){ base=file.slice(0,d); ext=file.slice(d); }
+  return \`<span class="fn">\${esc(base)}</span><span class="ext">\${esc(ext)}</span>\`;
+}
 function toast(html){const t=$("#toast");t.innerHTML=html;t.classList.add("show");
   clearTimeout(toast._h);toast._h=setTimeout(()=>t.classList.remove("show"),4600);}
 
@@ -112,7 +135,7 @@ function renderBoard(){
       <button class="btn" onclick="logout()">로그아웃</button>
     </div>
     \${adminBars}
-    <div class="card" id="list"></div>
+    <div class="grid" id="list"></div>
     <div class="foot" id="foot"></div>\`;
   refresh();
 }
@@ -126,16 +149,21 @@ async function refresh(){
   const foot=$("#foot"); if(foot) foot.textContent=d.svn_repo_url? ("SVN: "+d.svn_repo_url):"";
   const list=$("#list"); if(!list) return;
   list.innerHTML=d.tables.map(t=>{
-    let badge,startDis=false,finDis=true;
-    if(!t.in_use){badge='<span class="badge b-free">● 사용 가능</span>';}
-    else if(t.user_email===ME.email){badge=\`<span class="badge b-me">✎ 내가 사용 중 · \${t.elapsed}</span>\`;finDis=false;startDis=true;}
-    else{badge=\`<span class="badge b-busy">■ \${esc(t.user_name)} 사용 중 · \${t.elapsed}</span>\`;}
     const tt=esc(t.table).replace(/'/g,"\\\\'");
     const rm = ME.is_admin ? \`<button class="btn-x" title="목록에서 삭제" onclick="removeTable('\${tt}')">✕</button>\` : "";
-    return \`<div class="row"><div class="tname"><div class="f">\${esc(t.table)}</div>
-      <div class="m">\${esc(t.memo)||'&nbsp;'}</div></div>\${badge}
-      <button class="btn btn-primary" \${startDis?'disabled':''} onclick="start('\${tt}')">사용 시작</button>
-      <button class="btn" \${finDis?'disabled':''} onclick="finish('\${tt}')">사용 종료</button>\${rm}</div>\`;
+    let cls="", badge="", btn="";
+    if(!t.in_use){
+      badge=\`<span class="badge-sm b-free">● 사용 가능</span>\`;
+      btn=\`<button class="btn-sm primary" onclick="start('\${tt}')">시작</button>\`;
+    } else if(t.user_email===ME.email){
+      cls="mine"; badge=\`<span class="badge-sm b-me">✎ 내가 · \${t.elapsed}</span>\`;
+      btn=\`<button class="btn-sm" onclick="finish('\${tt}')">종료</button>\`;
+    } else {
+      cls="busy"; badge=\`<span class="badge-sm b-busy" title="\${esc(t.user_name)}">■ \${esc(t.user_name)} · \${t.elapsed}</span>\`;
+      btn = ME.is_admin ? \`<button class="btn-sm" onclick="finish('\${tt}')">강제종료</button>\` : \`\`;
+    }
+    return \`<div class="cell \${cls}"><div class="top"><div class="nm" title="\${esc(t.table)}">\${fmtNameCell(t.table)}</div>\${rm}</div>
+      <div class="bot">\${badge}\${btn}</div></div>\`;
   }).join("");
 }
 
@@ -343,13 +371,13 @@ async function apiStart(request, env, user, url) {
   ).bind(table, user.email, user.name, nowIso(), note).run();
   if (ins.meta.changes === 1) {
     await logHistory(env, table, user.email, "start");
-    await notify(env, url, `✏️ [편집 시작] ${table}\n담당: ${user.name}\n시작: ${hhmm()}${note ? "\n메모: " + note : ""}\n※ 동시 편집을 피해 주세요.`);
+    await notify(env, url, `✏️ ${table} · ${user.name} · ${hhmm()}`);
     return json({ ok: true });
   }
   const row = await env.DB.prepare("SELECT * FROM editing WHERE table_name=?").bind(table).first();
   if (row && row.user_email === user.email) return json({ ok: true, already_mine: true });
   await logHistory(env, table, user.email, "conflict");
-  await notify(env, url, `⚠️ [중복 시도] ${table}\n이미 ${row.user_name || row.user_email}님이 편집 중(경과 ${humanDuration(row.started_at)}).\n시도: ${user.name}`);
+  await notify(env, url, `⚠️ ${table} · 이미 ${row.user_name || row.user_email}님 사용 중(${humanDuration(row.started_at)}) · 시도 ${user.name}`);
   return json({ ok: false, conflict: true, holder: { user_name: row.user_name || row.user_email, elapsed: humanDuration(row.started_at) } }, 409);
 }
 async function apiFinish(request, env, user, url, admin) {
@@ -361,7 +389,7 @@ async function apiFinish(request, env, user, url, admin) {
     return json({ ok: false, error: `${row.user_name || row.user_email}님이 편집 중입니다. 본인 것만 종료할 수 있습니다.` }, 403);
   await env.DB.prepare("DELETE FROM editing WHERE table_name=?").bind(table).run();
   await logHistory(env, table, user.email, "finish");
-  await notify(env, url, `✅ [편집 완료] ${table}\n담당: ${row.user_name || row.user_email} · 소요 ${humanDuration(row.started_at)}\n이제 사용할 수 있습니다.`);
+  await notify(env, url, `✅ ${table} · ${row.user_name || row.user_email} · 완료(${humanDuration(row.started_at)})`);
   return json({ ok: true });
 }
 
@@ -428,9 +456,8 @@ async function logHistory(env, table, email, action) {
 async function notify(env, url, text) {
   const hook = env.KAKAOWORK_WEBHOOK_URL;
   if (!hook) return;
-  const link = url ? `\n현황 보기: ${url.origin}` : "";
   try {
-    await fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: text + link }) });
+    await fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
   } catch {}
 }
 
