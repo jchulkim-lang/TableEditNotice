@@ -55,7 +55,7 @@ export default {
       return json({ ok: false, error: String(e && e.message || e) }, 500);
     }
 
-    if (env.ASSETS) return env.ASSETS.fetch(request);
+    // 화면은 항상 이 파일에 내장된 최신 HTML 로 서빙(정적 index.html 에 의존하지 않음).
     return new Response(INDEX_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   },
 };
