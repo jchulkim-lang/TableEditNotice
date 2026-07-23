@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS editing (
   user_email  TEXT NOT NULL,
   user_name   TEXT,
   started_at  TEXT NOT NULL,        -- ISO8601 (UTC)
-  note        TEXT DEFAULT ''
+  note        TEXT DEFAULT '',
+  reminded    INTEGER DEFAULT 0     -- 1시간 경과 알림을 보냈는지(0=아직)
 );
 
 -- 보드에 표시할 테이블 목록.

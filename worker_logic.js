@@ -31,7 +31,7 @@ export default {
         if (!user) return json({ ok: false, error: "인증이 필요합니다." }, 401);
         const admin = isAdmin(env, user);
 
-        if (path === "/api/status") return apiStatus(env);
+        if (path === "/api/status") return apiStatus(env, url);
         if (path === "/api/start" && request.method === "POST") return apiStart(request, env, user, url);
         if (path === "/api/finish" && request.method === "POST") return apiFinish(request, env, user, url, admin);
         if (path === "/api/config" && request.method === "GET") return apiGetConfig(env);
@@ -148,7 +148,8 @@ async function apiMe(request, env) {
 }
 
 /* ---------------- 현황 ---------------- */
-async function apiStatus(env) {
+async function apiStatus(env, url) {
+  try { await maybeRemindStale(env, url); } catch {}   // 1시간 초과 점유 알림(조회 시 확인)
   const tables = (await env.DB.prepare("SELECT table_name, memo FROM tables ORDER BY sort_order, table_name").all()).results || [];
   const editing = (await env.DB.prepare("SELECT table_name, user_email, user_name, started_at, note FROM editing").all()).results || [];
   const emap = {}; for (const e of editing) emap[e.table_name] = e;
@@ -256,6 +257,23 @@ async function setSetting(env, key, value) {
 }
 async function logHistory(env, table, email, action) {
   try { await env.DB.prepare("INSERT INTO history(table_name,user_email,action,at) VALUES(?,?,?,?)").bind(table, email, action, nowIso()).run(); } catch {}
+}
+
+/* ---------------- 장시간 점유 알림(1시간) ---------------- */
+async function maybeRemindStale(env, url) {
+  const mins = parseInt(env.STALE_MINUTES) || 60;   // 기본 60분
+  const cutoff = new Date(Date.now() - mins * 60 * 1000).toISOString();
+  const stale = (await env.DB.prepare(
+    "SELECT table_name, user_name, user_email FROM editing WHERE reminded=0 AND started_at <= ?"
+  ).bind(cutoff).all()).results || [];
+  for (const r of stale) {
+    // 원자적으로 '한 번만' 클레임 → 중복 발송 방지
+    const claim = await env.DB.prepare("UPDATE editing SET reminded=1 WHERE table_name=? AND reminded=0").bind(r.table_name).run();
+    if (claim.meta.changes === 1) {
+      const who = r.user_name || r.user_email;
+      await notify(env, url, `⏰ [1시간 경과] ${r.table_name} · ${who}님, 벌써 1시간째 잡고 계신데요…😏 진짜 계속 편집 중인 거 맞죠? 혹시 '완료' 누르는 거 깜빡하신 거 아니고요~?`);
+    }
+  }
 }
 
 /* ---------------- 카카오워크 ---------------- */
