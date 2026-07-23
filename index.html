@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVN 테이블 편집 보드</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+ :root{--bg:#0f1115;--panel:#181b22;--panel2:#1f232c;--line:#2b303b;--ink:#e7eaf0;
+  --muted:#9aa3b2;--accent:#ffe94a;--accent-ink:#3a2f00;--free:#37d399;--busy:#ff6b6b;--me:#5b8cff;}
+ *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:'Malgun Gothic','Apple SD Gothic Neo',system-ui,sans-serif;font-size:14px}
+ .wrap{max-width:840px;margin:0 auto;padding:22px}
+ h1{font-size:19px;margin:0 0 4px} .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+ .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--panel);
+  border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+ .bar label{color:var(--muted)} input{background:var(--panel2);color:var(--ink);
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px}
+ .pill{font-size:12px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);
+  border-radius:999px;padding:4px 10px}
+ .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+ .row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line)}
+ .row:last-child{border-bottom:none}
+ .tname{flex:1;min-width:0} .tname .f{font-weight:600} .tname .m{font-size:12px;color:var(--muted);margin-top:2px}
+ .badge{font-size:12px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap}
+ .b-free{color:var(--free);background:rgba(55,211,153,.12);border:1px solid rgba(55,211,153,.35)}
+ .b-busy{color:var(--busy);background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.35)}
+ .b-me{color:var(--me);background:rgba(91,140,255,.14);border:1px solid rgba(91,140,255,.4)}
+ .btn{border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:8px;
+  padding:7px 12px;font-size:13px;cursor:pointer} .btn:hover{border-color:#3a4150}
+ .btn-primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+ .btn:disabled{opacity:.4;cursor:not-allowed}
+ .toast{position:fixed;left:50%;top:20px;transform:translateX(-50%);background:#2a1416;
+  border:1px solid var(--busy);color:#ffd7d7;padding:13px 18px;border-radius:12px;max-width:520px;
+  box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:50;display:none}
+ .toast.show{display:block} .foot{color:var(--muted);font-size:12px;margin-top:14px}
+ .center{min-height:70vh;display:grid;place-items:center;text-align:center}
+ .login{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:34px 30px;max-width:360px}
+ .login h1{margin-bottom:8px} .login p{color:var(--muted);font-size:13px;margin:0 0 20px}
+ .who{display:flex;align-items:center;gap:8px}
+</style></head><body>
+<div class="wrap">
+  <div id="app"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+let ME=null, POLL=null, SVN_LOADED=false;
+
+function toast(html){const t=$("#toast");t.innerHTML=html;t.classList.add("show");
+  clearTimeout(toast._h);toast._h=setTimeout(()=>t.classList.remove("show"),4200);}
+
+async function boot(){
+  const me=await (await fetch("/api/me")).json();
+  if(me.authed){ ME=me; renderBoard(); startPoll(); }
+  else { renderLogin(); }
+}
+
+/* ---------- 로그인 화면 ---------- */
+async function renderLogin(){
+  stopPoll();
+  const cfg=await (await fetch("/api/public-config")).json();
+  $("#app").innerHTML=`<div class="center"><div class="login">
+    <h1>SVN 테이블 편집 보드</h1>
+    <p>회사 Google 계정으로 로그인하세요.<br>회사 도메인 계정만 접속됩니다.</p>
+    <div id="gbtn"></div>
+    <div id="gmsg" style="color:var(--busy);font-size:12px;margin-top:12px"></div>
+  </div></div>`;
+  function init(){
+    if(!window.google||!google.accounts){ return setTimeout(init,300); }
+    google.accounts.id.initialize({
+      client_id: cfg.google_client_id,
+      callback: async (resp)=>{
+        const r=await fetch("/api/auth/google",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({credential:resp.credential})});
+        const d=await r.json();
+        if(d.ok){ boot(); } else { $("#gmsg").textContent=d.error||"로그인 실패"; }
+      }
+    });
+    google.accounts.id.renderButton($("#gbtn"),{theme:"filled_blue",size:"large",text:"signin_with",shape:"pill"});
+  }
+  init();
+}
+
+/* ---------- 보드 화면 ---------- */
+function renderBoard(){
+  $("#app").innerHTML=`
+    <h1>SVN 테이블 편집 보드</h1>
+    <div class="sub">누가 어떤 테이블을 쓰는지 실시간으로 표시됩니다. 수정할 때만 <b>사용 시작</b>을 눌러주세요.</div>
+    <div class="bar">
+      <span class="who"><span class="pill">👤 ${ME.name} · ${ME.email}</span></span>
+      <button class="btn" onclick="logout()">로그아웃</button>
+    </div>
+    <div class="bar">
+      <label>SVN Repo 주소</label>
+      <input id="svn" placeholder="https://svn.회사.com/svn/GameData" style="flex:1;min-width:260px">
+      <button class="btn" onclick="saveSvn()">저장</button>
+      <span class="pill" id="svnMsg">알림 문구에도 이 주소가 함께 나갑니다</span>
+    </div>
+    <div class="card" id="list"></div>
+    <div class="foot" id="foot"></div>`;
+  refresh();
+}
+
+async function refresh(){
+  if(!ME) return;
+  const r=await fetch("/api/status");
+  if(r.status===401){ ME=null; renderLogin(); return; }
+  const d=await r.json();
+  if(!SVN_LOADED){ const el=$("#svn"); if(el){ el.value=d.svn_repo_url||""; SVN_LOADED=true; } }
+  const foot=$("#foot"); if(foot) foot.textContent=d.svn_repo_url? ("SVN: "+d.svn_repo_url):"";
+  const list=$("#list"); if(!list) return;
+  list.innerHTML=d.tables.map(t=>{
+    let badge,startDis=false,finDis=true;
+    if(!t.in_use){badge='<span class="badge b-free">● 사용 가능</span>';}
+    else if(t.user_email===ME.email){badge=`<span class="badge b-me">✎ 내가 사용 중 · ${t.elapsed}</span>`;finDis=false;startDis=true;}
+    else{badge=`<span class="badge b-busy">■ ${t.user_name} 사용 중 · ${t.elapsed}</span>`;}
+    const tt=t.table.replace(/'/g,"\\'");
+    return `<div class="row"><div class="tname"><div class="f">${t.table}</div>
+      <div class="m">${t.memo||'&nbsp;'}</div></div>${badge}
+      <button class="btn btn-primary" ${startDis?'disabled':''} onclick="start('${tt}')">사용 시작</button>
+      <button class="btn" ${finDis?'disabled':''} onclick="finish('${tt}')">사용 종료</button></div>`;
+  }).join("");
+}
+
+async function start(table){
+  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table})});
+  if(r.status===409){const d=await r.json();
+    toast(`⚠️ <b>${table}</b> 은(는) 이미 <b>${d.holder.user_name}</b>님이 사용 중입니다 (경과 ${d.holder.elapsed}).`);}
+  refresh();
+}
+async function finish(table){
+  const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table})});
+  if(!r.ok){const d=await r.json();toast(d.error||"종료 실패");}
+  refresh();
+}
+async function saveSvn(){
+  const v=($("#svn").value||"").trim();
+  const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({svn_repo_url:v})});
+  const d=await r.json();
+  $("#svnMsg").textContent=d.ok?"저장됨 ✓":"저장 실패";
+  setTimeout(()=>{const m=$("#svnMsg"); if(m) m.textContent="알림 문구에도 이 주소가 함께 나갑니다";},2500);
+}
+async function logout(){ await fetch("/api/logout"); ME=null; SVN_LOADED=false; if(window.google&&google.accounts) google.accounts.id.disableAutoSelect(); renderLogin(); }
+
+function startPoll(){ stopPoll(); POLL=setInterval(refresh,3000); }
+function stopPoll(){ if(POLL) clearInterval(POLL); POLL=null; }
+
+boot();
+</script>
+</body></html>
