@@ -177,13 +177,13 @@ async function apiStart(request, env, user, url) {
   ).bind(table, user.email, user.name, nowIso(), note).run();
   if (ins.meta.changes === 1) {
     await logHistory(env, table, user.email, "start");
-    await notify(env, url, `✏️ ${table} · ${user.name} · ${hhmm()}`);
+    await notify(env, url, `✏️ [시작] ${table} · ${user.name} · ${hhmm()}`);
     return json({ ok: true });
   }
   const row = await env.DB.prepare("SELECT * FROM editing WHERE table_name=?").bind(table).first();
   if (row && row.user_email === user.email) return json({ ok: true, already_mine: true });
   await logHistory(env, table, user.email, "conflict");
-  await notify(env, url, `⚠️ ${table} · 이미 ${row.user_name || row.user_email}님 사용 중(${humanDuration(row.started_at)}) · 시도 ${user.name}`);
+  await notify(env, url, `⚠️ [중복] ${table} · 이미 ${row.user_name || row.user_email}님 사용 중(${humanDuration(row.started_at)}) · 시도 ${user.name}`);
   return json({ ok: false, conflict: true, holder: { user_name: row.user_name || row.user_email, elapsed: humanDuration(row.started_at) } }, 409);
 }
 async function apiFinish(request, env, user, url, admin) {
@@ -195,7 +195,7 @@ async function apiFinish(request, env, user, url, admin) {
     return json({ ok: false, error: `${row.user_name || row.user_email}님이 편집 중입니다. 본인 것만 종료할 수 있습니다.` }, 403);
   await env.DB.prepare("DELETE FROM editing WHERE table_name=?").bind(table).run();
   await logHistory(env, table, user.email, "finish");
-  await notify(env, url, `✅ ${table} · ${row.user_name || row.user_email} · 완료(${humanDuration(row.started_at)})`);
+  await notify(env, url, `✅ [완료] ${table} · ${row.user_name || row.user_email} · 소요 ${humanDuration(row.started_at)}`);
   return json({ ok: true });
 }
 

@@ -8,7 +8,7 @@
   --muted:#9aa3b2;--accent:#ffe94a;--accent-ink:#3a2f00;--free:#37d399;--busy:#ff6b6b;--me:#5b8cff;}
  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);
   font-family:'Malgun Gothic','Apple SD Gothic Neo',system-ui,sans-serif;font-size:14px}
- .wrap{max-width:840px;margin:0 auto;padding:22px}
+ .wrap{max-width:none;margin:0 auto;padding:18px 24px}
  h1{font-size:19px;margin:0 0 4px} .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--panel);
   border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
@@ -106,13 +106,7 @@ function renderBoard(){
       <label>SVN Repo 주소</label>
       <input id="svn" placeholder="svn://... 또는 https://..." style="flex:1;min-width:240px">
       <button class="btn" onclick="saveSvn()">저장</button>
-      <span class="pill" id="svnMsg">관리자만 수정 가능 · 알림에도 함께 표시</span>
-    </div>
-    <div class="bar">
-      <label>테이블 추가</label>
-      <input id="newTable" placeholder="파일명 (예: boss_table.xlsx)" style="width:230px">
-      <input id="newMemo" placeholder="설명(선택)" style="flex:1;min-width:120px">
-      <button class="btn btn-primary" onclick="addTable()">추가</button>
+      <span class="pill" id="svnMsg">관리자만 수정 가능 · 목록은 동기화(bat)로 채워집니다</span>
     </div>` : "";
   $("#app").innerHTML=`
     <h1>SVN 테이블 편집 보드</h1>
@@ -137,19 +131,18 @@ async function refresh(){
   const list=$("#list"); if(!list) return;
   list.innerHTML=d.tables.map(t=>{
     const tt=esc(t.table).replace(/'/g,"\\'");
-    const rm = ME.is_admin ? `<button class="btn-x" title="목록에서 삭제" onclick="removeTable('${tt}')">✕</button>` : "";
     let cls="", badge="", btn="";
     if(!t.in_use){
       badge=`<span class="badge-sm b-free">● 사용 가능</span>`;
       btn=`<button class="btn-sm primary" onclick="start('${tt}')">시작</button>`;
     } else if(t.user_email===ME.email){
-      cls="mine"; badge=`<span class="badge-sm b-me">✎ 내가 · ${t.elapsed}</span>`;
+      cls="mine"; badge=`<span class="badge-sm b-me" title="내가 사용 중 · 경과 ${t.elapsed}">👤 ${esc(t.user_name)}</span>`;
       btn=`<button class="btn-sm" onclick="finish('${tt}')">종료</button>`;
     } else {
-      cls="busy"; badge=`<span class="badge-sm b-busy" title="${esc(t.user_name)}">■ ${esc(t.user_name)} · ${t.elapsed}</span>`;
+      cls="busy"; badge=`<span class="badge-sm b-busy" title="사용 중 · 경과 ${t.elapsed}">👤 ${esc(t.user_name)}</span>`;
       btn = ME.is_admin ? `<button class="btn-sm" onclick="finish('${tt}')">강제종료</button>` : ``;
     }
-    return `<div class="cell ${cls}"><div class="top"><div class="nm" title="${esc(t.table)}">${fmtNameCell(t.table)}</div>${rm}</div>
+    return `<div class="cell ${cls}"><div class="top"><div class="nm" title="${esc(t.table)}">${fmtNameCell(t.table)}</div></div>
       <div class="bot">${badge}${btn}</div></div>`;
   }).join("");
 }
@@ -171,19 +164,6 @@ async function saveSvn(){
   const d=await r.json();
   $("#svnMsg").textContent = r.ok && d.ok ? "저장됨 ✓" : (d.error||"저장 실패");
   setTimeout(()=>{const m=$("#svnMsg"); if(m) m.textContent="관리자만 수정 가능 · 알림에도 함께 표시";},2600);
-}
-async function addTable(){
-  const name=($("#newTable").value||"").trim(); const memo=($("#newMemo").value||"").trim();
-  if(!name){ toast("테이블 파일명을 입력하세요."); return; }
-  const r=await fetch("/api/tables/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table_name:name,memo})});
-  if(!r.ok){const d=await r.json();toast(esc(d.error||"추가 실패"));return;}
-  $("#newTable").value=""; $("#newMemo").value=""; refresh();
-}
-async function removeTable(name){
-  if(!confirm(`'${name}' 을(를) 목록에서 삭제할까요?`)) return;
-  const r=await fetch("/api/tables/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table_name:name})});
-  if(!r.ok){const d=await r.json();toast(esc(d.error||"삭제 실패"));return;}
-  refresh();
 }
 async function logout(){ await fetch("/api/logout"); ME=null; SVN_LOADED=false; if(window.google&&google.accounts) google.accounts.id.disableAutoSelect(); renderLogin(); }
 
