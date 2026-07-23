@@ -16,10 +16,21 @@
   border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px}
  .pill{font-size:12px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);
   border-radius:999px;padding:4px 10px}
+ .tag-admin{color:var(--accent);border-color:rgba(255,233,74,.4)}
  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
  .row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line)}
  .row:last-child{border-bottom:none}
- .tname{flex:1;min-width:0} .tname .f{font-weight:600} .tname .m{font-size:12px;color:var(--muted);margin-top:2px}
+ .tname{flex:1;min-width:0} .tname .f{font-weight:700;font-size:15px;letter-spacing:.2px} .tname .m{font-size:12px;color:var(--muted);margin-top:2px}
+ .fn{color:#7cc4ff} .ext{color:var(--muted);font-weight:400} .dir{color:#8b93a3;font-weight:400;font-size:12px}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+ .cell{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 11px;min-width:0}
+ .cell.mine{border-color:rgba(91,140,255,.5)} .cell.busy{border-color:rgba(255,107,107,.4)}
+ .cell .top{display:flex;align-items:center;gap:6px}
+ .cell .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:14px}
+ .cell .bot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}
+ .badge-sm{font-size:11px;font-weight:700;padding:3px 7px;border-radius:999px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+ .btn-sm{border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;white-space:nowrap}
+ .btn-sm:hover{border-color:#3a4150} .btn-sm.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
  .badge{font-size:12px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap}
  .b-free{color:var(--free);background:rgba(55,211,153,.12);border:1px solid rgba(55,211,153,.35)}
  .b-busy{color:var(--busy);background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.35)}
@@ -27,35 +38,46 @@
  .btn{border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:8px;
   padding:7px 12px;font-size:13px;cursor:pointer} .btn:hover{border-color:#3a4150}
  .btn-primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+ .btn-x{border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:16px;padding:4px 8px}
+ .btn-x:hover{color:var(--busy)}
  .btn:disabled{opacity:.4;cursor:not-allowed}
  .toast{position:fixed;left:50%;top:20px;transform:translateX(-50%);background:#2a1416;
   border:1px solid var(--busy);color:#ffd7d7;padding:13px 18px;border-radius:12px;max-width:520px;
   box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:50;display:none}
- .toast.show{display:block} .foot{color:var(--muted);font-size:12px;margin-top:14px}
+ .toast.show{display:block} .foot{color:var(--muted);font-size:12px;margin-top:14px;line-height:1.7}
  .center{min-height:70vh;display:grid;place-items:center;text-align:center}
  .login{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:34px 30px;max-width:360px}
  .login h1{margin-bottom:8px} .login p{color:var(--muted);font-size:13px;margin:0 0 20px}
  .who{display:flex;align-items:center;gap:8px}
 </style></head><body>
-<div class="wrap">
-  <div id="app"></div>
-</div>
+<div class="wrap"><div id="app"></div></div>
 <div class="toast" id="toast"></div>
-
 <script>
 const $=s=>document.querySelector(s);
 let ME=null, POLL=null, SVN_LOADED=false;
-
+function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
+function fmtName(name){
+  name=String(name||"");
+  let dir="",file=name; const s=name.lastIndexOf("/");
+  if(s>=0){ dir=name.slice(0,s+1); file=name.slice(s+1); }
+  let base=file,ext=""; const d=file.lastIndexOf(".");
+  if(d>0){ base=file.slice(0,d); ext=file.slice(d); }
+  return (dir?`<span class="dir">${esc(dir)}</span>`:"")+`<span class="fn">${esc(base)}</span><span class="ext">${esc(ext)}</span>`;
+}
+function fmtNameCell(name){ // 격자 셀용: 폴더는 빼고 파일명만(전체경로는 title로)
+  name=String(name||""); const s=name.lastIndexOf("/"); const file=s>=0?name.slice(s+1):name;
+  let base=file,ext=""; const d=file.lastIndexOf("."); if(d>0){ base=file.slice(0,d); ext=file.slice(d); }
+  return `<span class="fn">${esc(base)}</span><span class="ext">${esc(ext)}</span>`;
+}
 function toast(html){const t=$("#toast");t.innerHTML=html;t.classList.add("show");
-  clearTimeout(toast._h);toast._h=setTimeout(()=>t.classList.remove("show"),4200);}
+  clearTimeout(toast._h);toast._h=setTimeout(()=>t.classList.remove("show"),4600);}
 
 async function boot(){
   const me=await (await fetch("/api/me")).json();
-  if(me.authed){ ME=me; renderBoard(); startPoll(); }
-  else { renderLogin(); }
+  if(me.authed){ ME=me; renderBoard(); startPoll(); } else { renderLogin(); }
 }
 
-/* ---------- 로그인 화면 ---------- */
+/* ---------- 로그인 ---------- */
 async function renderLogin(){
   stopPoll();
   const cfg=await (await fetch("/api/public-config")).json();
@@ -65,38 +87,42 @@ async function renderLogin(){
     <div id="gbtn"></div>
     <div id="gmsg" style="color:var(--busy);font-size:12px;margin-top:12px"></div>
   </div></div>`;
-  function init(){
+  (function init(){
     if(!window.google||!google.accounts){ return setTimeout(init,300); }
-    google.accounts.id.initialize({
-      client_id: cfg.google_client_id,
-      callback: async (resp)=>{
-        const r=await fetch("/api/auth/google",{method:"POST",headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({credential:resp.credential})});
-        const d=await r.json();
-        if(d.ok){ boot(); } else { $("#gmsg").textContent=d.error||"로그인 실패"; }
-      }
-    });
+    google.accounts.id.initialize({ client_id: cfg.google_client_id, callback: async (resp)=>{
+      const r=await fetch("/api/auth/google",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({credential:resp.credential})});
+      const d=await r.json();
+      if(d.ok){ boot(); } else { $("#gmsg").textContent=d.error||"로그인 실패"; }
+    }});
     google.accounts.id.renderButton($("#gbtn"),{theme:"filled_blue",size:"large",text:"signin_with",shape:"pill"});
-  }
-  init();
+  })();
 }
 
-/* ---------- 보드 화면 ---------- */
+/* ---------- 보드 ---------- */
 function renderBoard(){
+  const adminBadge = ME.is_admin ? `<span class="pill tag-admin">관리자</span>` : "";
+  const adminBars = ME.is_admin ? `
+    <div class="bar">
+      <label>SVN Repo 주소</label>
+      <input id="svn" placeholder="svn://... 또는 https://..." style="flex:1;min-width:240px">
+      <button class="btn" onclick="saveSvn()">저장</button>
+      <span class="pill" id="svnMsg">관리자만 수정 가능 · 알림에도 함께 표시</span>
+    </div>
+    <div class="bar">
+      <label>테이블 추가</label>
+      <input id="newTable" placeholder="파일명 (예: boss_table.xlsx)" style="width:230px">
+      <input id="newMemo" placeholder="설명(선택)" style="flex:1;min-width:120px">
+      <button class="btn btn-primary" onclick="addTable()">추가</button>
+    </div>` : "";
   $("#app").innerHTML=`
     <h1>SVN 테이블 편집 보드</h1>
     <div class="sub">누가 어떤 테이블을 쓰는지 실시간으로 표시됩니다. 수정할 때만 <b>사용 시작</b>을 눌러주세요.</div>
     <div class="bar">
-      <span class="who"><span class="pill">👤 ${ME.name} · ${ME.email}</span></span>
+      <span class="who"><span class="pill">👤 ${esc(ME.name)} · ${esc(ME.email)}</span>${adminBadge}</span>
       <button class="btn" onclick="logout()">로그아웃</button>
     </div>
-    <div class="bar">
-      <label>SVN Repo 주소</label>
-      <input id="svn" placeholder="https://svn.회사.com/svn/GameData" style="flex:1;min-width:260px">
-      <button class="btn" onclick="saveSvn()">저장</button>
-      <span class="pill" id="svnMsg">알림 문구에도 이 주소가 함께 나갑니다</span>
-    </div>
-    <div class="card" id="list"></div>
+    ${adminBars}
+    <div class="grid" id="list"></div>
     <div class="foot" id="foot"></div>`;
   refresh();
 }
@@ -106,45 +132,63 @@ async function refresh(){
   const r=await fetch("/api/status");
   if(r.status===401){ ME=null; renderLogin(); return; }
   const d=await r.json();
-  if(!SVN_LOADED){ const el=$("#svn"); if(el){ el.value=d.svn_repo_url||""; SVN_LOADED=true; } }
+  if(ME.is_admin && !SVN_LOADED){ const el=$("#svn"); if(el){ el.value=d.svn_repo_url||""; SVN_LOADED=true; } }
   const foot=$("#foot"); if(foot) foot.textContent=d.svn_repo_url? ("SVN: "+d.svn_repo_url):"";
   const list=$("#list"); if(!list) return;
   list.innerHTML=d.tables.map(t=>{
-    let badge,startDis=false,finDis=true;
-    if(!t.in_use){badge='<span class="badge b-free">● 사용 가능</span>';}
-    else if(t.user_email===ME.email){badge=`<span class="badge b-me">✎ 내가 사용 중 · ${t.elapsed}</span>`;finDis=false;startDis=true;}
-    else{badge=`<span class="badge b-busy">■ ${t.user_name} 사용 중 · ${t.elapsed}</span>`;}
-    const tt=t.table.replace(/'/g,"\\'");
-    return `<div class="row"><div class="tname"><div class="f">${t.table}</div>
-      <div class="m">${t.memo||'&nbsp;'}</div></div>${badge}
-      <button class="btn btn-primary" ${startDis?'disabled':''} onclick="start('${tt}')">사용 시작</button>
-      <button class="btn" ${finDis?'disabled':''} onclick="finish('${tt}')">사용 종료</button></div>`;
+    const tt=esc(t.table).replace(/'/g,"\\'");
+    const rm = ME.is_admin ? `<button class="btn-x" title="목록에서 삭제" onclick="removeTable('${tt}')">✕</button>` : "";
+    let cls="", badge="", btn="";
+    if(!t.in_use){
+      badge=`<span class="badge-sm b-free">● 사용 가능</span>`;
+      btn=`<button class="btn-sm primary" onclick="start('${tt}')">시작</button>`;
+    } else if(t.user_email===ME.email){
+      cls="mine"; badge=`<span class="badge-sm b-me">✎ 내가 · ${t.elapsed}</span>`;
+      btn=`<button class="btn-sm" onclick="finish('${tt}')">종료</button>`;
+    } else {
+      cls="busy"; badge=`<span class="badge-sm b-busy" title="${esc(t.user_name)}">■ ${esc(t.user_name)} · ${t.elapsed}</span>`;
+      btn = ME.is_admin ? `<button class="btn-sm" onclick="finish('${tt}')">강제종료</button>` : ``;
+    }
+    return `<div class="cell ${cls}"><div class="top"><div class="nm" title="${esc(t.table)}">${fmtNameCell(t.table)}</div>${rm}</div>
+      <div class="bot">${badge}${btn}</div></div>`;
   }).join("");
 }
 
 async function start(table){
   const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table})});
   if(r.status===409){const d=await r.json();
-    toast(`⚠️ <b>${table}</b> 은(는) 이미 <b>${d.holder.user_name}</b>님이 사용 중입니다 (경과 ${d.holder.elapsed}).`);}
+    toast(`⚠️ <b>${esc(table)}</b> 은(는) 이미 <b>${esc(d.holder.user_name)}</b>님이 사용 중입니다 (경과 ${d.holder.elapsed}).`);}
   refresh();
 }
 async function finish(table){
   const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table})});
-  if(!r.ok){const d=await r.json();toast(d.error||"종료 실패");}
+  if(!r.ok){const d=await r.json();toast(esc(d.error||"종료 실패"));}
   refresh();
 }
 async function saveSvn(){
   const v=($("#svn").value||"").trim();
   const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({svn_repo_url:v})});
   const d=await r.json();
-  $("#svnMsg").textContent=d.ok?"저장됨 ✓":"저장 실패";
-  setTimeout(()=>{const m=$("#svnMsg"); if(m) m.textContent="알림 문구에도 이 주소가 함께 나갑니다";},2500);
+  $("#svnMsg").textContent = r.ok && d.ok ? "저장됨 ✓" : (d.error||"저장 실패");
+  setTimeout(()=>{const m=$("#svnMsg"); if(m) m.textContent="관리자만 수정 가능 · 알림에도 함께 표시";},2600);
+}
+async function addTable(){
+  const name=($("#newTable").value||"").trim(); const memo=($("#newMemo").value||"").trim();
+  if(!name){ toast("테이블 파일명을 입력하세요."); return; }
+  const r=await fetch("/api/tables/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table_name:name,memo})});
+  if(!r.ok){const d=await r.json();toast(esc(d.error||"추가 실패"));return;}
+  $("#newTable").value=""; $("#newMemo").value=""; refresh();
+}
+async function removeTable(name){
+  if(!confirm(`'${name}' 을(를) 목록에서 삭제할까요?`)) return;
+  const r=await fetch("/api/tables/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table_name:name})});
+  if(!r.ok){const d=await r.json();toast(esc(d.error||"삭제 실패"));return;}
+  refresh();
 }
 async function logout(){ await fetch("/api/logout"); ME=null; SVN_LOADED=false; if(window.google&&google.accounts) google.accounts.id.disableAutoSelect(); renderLogin(); }
 
 function startPoll(){ stopPoll(); POLL=setInterval(refresh,3000); }
 function stopPoll(){ if(POLL) clearInterval(POLL); POLL=null; }
-
 boot();
 </script>
 </body></html>
