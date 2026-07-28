@@ -1,45 +1,42 @@
--- SVN 테이블 편집 보드 — Cloudflare D1 스키마
--- 적용:  wrangler d1 execute svn_table_board --file=./schema.sql   (원격은 --remote 추가)
+-- SVN 테이블 편집 보드 — Cloudflare D1 스키마 (탭/그룹 지원)
+-- 새 D1 을 만들 때 이 파일 내용을 Console 에 붙여넣어 실행하세요.
+-- 이미 운영 중인 D1 은 migrate_tabs.sql 을 실행하세요(기존 목록/점유는 초기화됨).
 
--- 현재 편집(사용) 중인 테이블. table_name 이 PK 라 한 테이블은 한 명만 점유.
+-- 현재 편집(사용) 중. (그룹 + 테이블명) 조합이 PK.
 CREATE TABLE IF NOT EXISTS editing (
-  table_name  TEXT PRIMARY KEY,
+  grp         TEXT NOT NULL DEFAULT 'plan',   -- plan=기획, dev=개발
+  table_name  TEXT NOT NULL,
   user_email  TEXT NOT NULL,
   user_name   TEXT,
-  started_at  TEXT NOT NULL,        -- ISO8601 (UTC)
+  started_at  TEXT NOT NULL,                  -- ISO8601 (UTC)
   note        TEXT DEFAULT '',
-  reminded    INTEGER DEFAULT 0     -- 1시간 경과 알림을 보냈는지(0=아직)
+  reminded    INTEGER DEFAULT 0,              -- 1시간 경과 알림 발송 여부
+  PRIMARY KEY (grp, table_name)
 );
 
--- 보드에 표시할 테이블 목록.
+-- 탭(그룹)별 테이블 목록.
 CREATE TABLE IF NOT EXISTS tables (
-  table_name  TEXT PRIMARY KEY,
+  grp         TEXT NOT NULL DEFAULT 'plan',
+  table_name  TEXT NOT NULL,
   memo        TEXT DEFAULT '',
-  sort_order  INTEGER DEFAULT 0
+  sort_order  INTEGER DEFAULT 0,
+  PRIMARY KEY (grp, table_name)
 );
 
--- 기타 설정(예: svn_repo_url). key-value.
+-- 설정(예: svn_repo_url_plan, svn_repo_url_dev).
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
 
--- 감사 로그(선택): 시작/종료 이력.
+-- 이력(선택).
 CREATE TABLE IF NOT EXISTS history (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  grp         TEXT,
   table_name  TEXT NOT NULL,
   user_email  TEXT NOT NULL,
-  action      TEXT NOT NULL,        -- start | finish | conflict
+  action      TEXT NOT NULL,
   at          TEXT NOT NULL
 );
 
--- 초기 테이블 목록(원하는 대로 수정하세요).
-INSERT OR IGNORE INTO tables(table_name, memo, sort_order) VALUES
-  ('monster_table.xlsx', '몬스터 스탯/밸런스', 1),
-  ('item_table.xlsx',    '아이템 정의',       2),
-  ('skill_table.xlsx',   '스킬 데이터',       3),
-  ('quest_table.xlsx',   '퀘스트/보상',       4),
-  ('drop_table.xlsx',    '드랍 테이블',       5);
-
-INSERT OR IGNORE INTO settings(key, value) VALUES
-  ('svn_repo_url', 'https://svn.vicgamestudios.com/svn/GameData');
+-- 목록은 동기화 스크립트(bat)가 채웁니다.
