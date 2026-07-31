@@ -76,7 +76,7 @@ const INDEX_HTML = `<!DOCTYPE html>
 <div class="toast" id="toast"></div>
 <script>
 const $=s=>document.querySelector(s);
-let ME=null, POLL=null, GROUPS_DATA=[], ACTIVE="plan", SVN_LOADED={};
+let ME=null, POLL=null, GROUPS_DATA=[], ACTIVE="plan", SVN_LOADED={}, SEARCH="";
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
 function fmtName(name){
   name=String(name||"");
@@ -141,8 +141,20 @@ function renderTabs(){
     return \`<button class="tab \${g.key===ACTIVE?'active':''}" onclick="switchTab('\${g.key}')">\${esc(g.label)}\${n?\` · \${n}\`:""}</button>\`;
   }).join("");
 }
-function switchTab(k){ ACTIVE=k; renderTabs(); renderTab(); }
-function renderTab(){
+function switchTab(k){ ACTIVE=k; SEARCH=""; renderTabs(); renderTabStructure(); renderDynamic(); }
+function onSearch(v){ SEARCH=v; renderDynamic(); }
+
+function cellHtml(t){
+  const tt=esc(t.table).replace(/'/g,"\\\\'");
+  let cls="",badge="",btn="";
+  if(!t.in_use){ badge=\`<span class="badge-sm b-free">● 사용 가능</span>\`; btn=\`<button class="btn-sm primary" onclick="start('\${tt}')">시작</button>\`; }
+  else if(t.user_email===ME.email){ cls="mine"; badge=\`<span class="badge-sm b-me" title="내가 사용 중 · 경과 \${t.elapsed}">👤 \${esc(t.user_name)}</span>\`; btn=\`<button class="btn-sm" onclick="finish('\${tt}')">종료</button>\`; }
+  else { cls="busy"; badge=\`<span class="badge-sm b-busy" title="사용 중 · 경과 \${t.elapsed}">👤 \${esc(t.user_name)}</span>\`; btn = ME.is_admin?\`<button class="btn-sm" onclick="finish('\${tt}')">강제종료</button>\`:\`\`; }
+  return \`<div class="cell \${cls}"><div class="top"><div class="nm" title="\${esc(t.table)}">\${fmtNameCell(t.table)}</div></div><div class="bot">\${badge}\${btn}</div></div>\`;
+}
+
+// 탭 전환/최초 1회: 고정 뼈대(검색창 포함)를 만든다. 이후 새로고침은 renderDynamic 만 갱신 → 검색창 포커스 유지.
+function renderTabStructure(){
   const g=GROUPS_DATA.find(x=>x.key===ACTIVE)||GROUPS_DATA[0];
   const box=$("#tab"); if(!box) return;
   if(!g){ box.innerHTML=""; return; }
@@ -153,20 +165,41 @@ function renderTab(){
       <button class="btn" onclick="saveSvn()">저장</button>
       <span class="pill" id="svnMsg">관리자만 수정 · 목록은 동기화(bat)로 채워집니다</span>
     </div>\` : "";
+  box.innerHTML=\`\${adminBar}
+    <div class="bar">
+      <label>🔎 검색</label>
+      <input id="search" placeholder="파일명 입력…" style="flex:1;min-width:200px" oninput="onSearch(this.value)" autocomplete="off">
+      <span class="pill" id="searchInfo"></span>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="grid" id="grid"></div>
+    <div class="foot" id="foot"></div>\`;
+  const si=$("#search"); if(si) si.value=SEARCH;
+  SVN_LOADED[ACTIVE]=false;
+}
+
+function renderDynamic(){
+  const g=GROUPS_DATA.find(x=>x.key===ACTIVE)||GROUPS_DATA[0]; if(!g) return;
   const inUse=g.tables.filter(t=>t.in_use);
   let sum=\`<span class="s-title">현재 사용 중\${inUse.length?(" · "+inUse.length):""}</span>\`;
   if(!inUse.length) sum+=\`<span class="s-empty">사용 중인 테이블이 없습니다</span>\`;
   else sum+=inUse.map(t=>{const file=String(t.table).split("/").pop();
     return \`<span class="s-chip \${t.user_email===ME.email?'me':''}" title="\${esc(t.table)}">👤 \${esc(t.user_name)}<span class="s-file">· \${esc(file)}</span></span>\`;}).join("");
-  const cells=g.tables.map(t=>{
-    const tt=esc(t.table).replace(/'/g,"\\\\'");
-    let cls="",badge="",btn="";
-    if(!t.in_use){ badge=\`<span class="badge-sm b-free">● 사용 가능</span>\`; btn=\`<button class="btn-sm primary" onclick="start('\${tt}')">시작</button>\`; }
-    else if(t.user_email===ME.email){ cls="mine"; badge=\`<span class="badge-sm b-me" title="내가 사용 중 · 경과 \${t.elapsed}">👤 \${esc(t.user_name)}</span>\`; btn=\`<button class="btn-sm" onclick="finish('\${tt}')">종료</button>\`; }
-    else { cls="busy"; badge=\`<span class="badge-sm b-busy" title="사용 중 · 경과 \${t.elapsed}">👤 \${esc(t.user_name)}</span>\`; btn = ME.is_admin?\`<button class="btn-sm" onclick="finish('\${tt}')">강제종료</button>\`:\`\`; }
-    return \`<div class="cell \${cls}"><div class="top"><div class="nm" title="\${esc(t.table)}">\${fmtNameCell(t.table)}</div></div><div class="bot">\${badge}\${btn}</div></div>\`;
-  }).join("");
-  box.innerHTML=\`\${adminBar}<div class="summary">\${sum}</div><div class="grid">\${cells}</div><div class="foot">\${g.svn_repo_url?("SVN: "+esc(g.svn_repo_url)):""}</div>\`;
+  const sm=$("#summary"); if(sm) sm.innerHTML=sum;
+  const q=(SEARCH||"").trim().toLowerCase();
+  let list=g.tables;
+  if(q){
+    list=g.tables.filter(t=>String(t.table).toLowerCase().includes(q));
+    list.sort((a,b)=>{
+      const an=String(a.table).split("/").pop().toLowerCase(), bn=String(b.table).split("/").pop().toLowerCase();
+      const ap=an.startsWith(q)?0:1, bp=bn.startsWith(q)?0:1;
+      return (ap-bp) || an.localeCompare(bn);
+    });
+  }
+  const grid=$("#grid");
+  if(grid) grid.innerHTML = list.length ? list.map(cellHtml).join("") : \`<div class="s-empty" style="padding:10px 4px">검색 결과가 없습니다</div>\`;
+  const info=$("#searchInfo"); if(info) info.textContent = q ? \`\${list.length} / \${g.tables.length}\` : \`\${g.tables.length}개\`;
+  const foot=$("#foot"); if(foot) foot.textContent = g.svn_repo_url?("SVN: "+g.svn_repo_url):"";
   if(ME.is_admin){ const el=$("#svn"); if(el && !SVN_LOADED[ACTIVE]){ el.value=g.svn_repo_url||""; SVN_LOADED[ACTIVE]=true; } }
 }
 
@@ -177,7 +210,9 @@ async function refresh(){
   const d=await r.json();
   GROUPS_DATA=d.groups||[];
   if(!GROUPS_DATA.find(g=>g.key===ACTIVE) && GROUPS_DATA[0]) ACTIVE=GROUPS_DATA[0].key;
-  renderTabs(); renderTab();
+  renderTabs();
+  if(!$("#grid")) renderTabStructure();
+  renderDynamic();
 }
 
 async function start(table){
