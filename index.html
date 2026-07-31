@@ -40,6 +40,16 @@
  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
  .tab{padding:8px 18px;border:1px solid var(--line);background:var(--panel);border-radius:10px;cursor:pointer;color:var(--muted);font-weight:700;font-size:14px}
  .tab:hover{border-color:#3a4150} .tab.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+ .addcard{display:flex;align-items:center;justify-content:center;min-height:66px;cursor:pointer;border-style:dashed;color:var(--muted)}
+ .addcard:hover{border-color:var(--accent);color:var(--accent)} .addcard .plus{font-size:32px;font-weight:700;line-height:1}
+ .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;place-items:center;z-index:60}
+ .modal.show{display:grid}
+ .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(560px,94vw);max-height:82vh;display:flex;flex-direction:column;overflow:hidden}
+ .modal-head{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+ .modal-head h2{font-size:15px;margin:0} .modal-list{overflow:auto;padding:6px 8px}
+ .pick{display:flex;align-items:center;gap:10px;padding:8px 8px;border-bottom:1px solid var(--line)}
+ .pick:last-child{border-bottom:none} .pick .pn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:14px}
+ .pick .src{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 8px;white-space:nowrap}
  .badge{font-size:12px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap}
  .b-free{color:var(--free);background:rgba(55,211,153,.12);border:1px solid rgba(55,211,153,.35)}
  .b-busy{color:var(--busy);background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.35)}
@@ -61,6 +71,12 @@
 </style></head><body>
 <div class="wrap"><div id="app"></div></div>
 <div class="toast" id="toast"></div>
+<div class="modal" id="picker"><div class="modal-box">
+  <div class="modal-head"><h2 id="pickerTitle">파일 담기</h2>
+    <input id="pickerSearch" placeholder="검색…" style="flex:1;min-width:120px" oninput="renderPicker()" autocomplete="off">
+    <button class="btn" onclick="closePicker()">닫기</button></div>
+  <div class="modal-list" id="pickerList"></div>
+</div></div>
 <script>
 const $=s=>document.querySelector(s);
 let ME=null, POLL=null, GROUPS_DATA=[], ACTIVE="plan", SVN_LOADED={}, SEARCH="";
@@ -131,13 +147,52 @@ function renderTabs(){
 function switchTab(k){ ACTIVE=k; SEARCH=""; renderTabs(); renderTabStructure(); renderDynamic(); }
 function onSearch(v){ SEARCH=v; renderDynamic(); }
 
+function groupKind(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.kind:'sync'; }
+function labelOf(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.label:k; }
+
 function cellHtml(t){
   const tt=esc(t.table).replace(/'/g,"\\'");
+  const sg=t.src_grp||ACTIVE;
   let cls="",badge="",btn="";
-  if(!t.in_use){ badge=`<span class="badge-sm b-free">● 사용 가능</span>`; btn=`<button class="btn-sm primary" onclick="start('${tt}')">시작</button>`; }
-  else if(t.user_email===ME.email){ cls="mine"; badge=`<span class="badge-sm b-me" title="내가 사용 중 · 경과 ${t.elapsed}">👤 ${esc(t.user_name)}</span>`; btn=`<button class="btn-sm" onclick="finish('${tt}')">종료</button>`; }
-  else { cls="busy"; badge=`<span class="badge-sm b-busy" title="사용 중 · 경과 ${t.elapsed}">👤 ${esc(t.user_name)}</span>`; btn = ME.is_admin?`<button class="btn-sm" onclick="finish('${tt}')">강제종료</button>`:``; }
-  return `<div class="cell ${cls}"><div class="top"><div class="nm" title="${esc(t.table)}">${fmtNameCell(t.table)}</div></div><div class="bot">${badge}${btn}</div></div>`;
+  if(!t.in_use){ badge=`<span class="badge-sm b-free">● 사용 가능</span>`; btn=`<button class="btn-sm primary" onclick="start('${tt}','${sg}')">시작</button>`; }
+  else if(t.user_email===ME.email){ cls="mine"; badge=`<span class="badge-sm b-me" title="내가 사용 중 · 경과 ${t.elapsed}">👤 ${esc(t.user_name)}</span>`; btn=`<button class="btn-sm" onclick="finish('${tt}','${sg}')">종료</button>`; }
+  else { cls="busy"; badge=`<span class="badge-sm b-busy" title="사용 중 · 경과 ${t.elapsed}">👤 ${esc(t.user_name)}</span>`; btn = ME.is_admin?`<button class="btn-sm" onclick="finish('${tt}','${sg}')">강제종료</button>`:``; }
+  const rm = (groupKind(ACTIVE)==='dept') ? `<button class="btn-x" title="이 탭에서 빼기" onclick="removeFav('${tt}','${sg}')">✕</button>` : "";
+  return `<div class="cell ${cls}"><div class="top"><div class="nm" title="${esc(t.table)}">${fmtNameCell(t.table)}</div>${rm}</div><div class="bot">${badge}${btn}</div></div>`;
+}
+
+/* ---------- 부서 탭: 파일 담기 모달 ---------- */
+function openPicker(){ const s=$("#pickerSearch"); if(s) s.value=""; $("#picker").classList.add("show"); renderPicker(); }
+function closePicker(){ $("#picker").classList.remove("show"); }
+function availableForDept(dept){
+  const pool=[];
+  GROUPS_DATA.filter(g=>g.kind==="sync").forEach(g=> g.tables.forEach(t=> pool.push({table:t.table, src_grp:g.key, srcLabel:g.label})));
+  const dg=GROUPS_DATA.find(g=>g.key===dept);
+  const have=new Set((dg?dg.tables:[]).map(t=> (t.src_grp||"")+"|"+t.table));
+  return pool.filter(p=> !have.has(p.src_grp+"|"+p.table));
+}
+function renderPicker(){
+  const dept=ACTIVE;
+  const q=(($("#pickerSearch")||{}).value||"").trim().toLowerCase();
+  let items=availableForDept(dept);
+  if(q) items=items.filter(p=> p.table.toLowerCase().includes(q));
+  items.sort((a,b)=> String(a.table).split("/").pop().toLowerCase().localeCompare(String(b.table).split("/").pop().toLowerCase()));
+  const tt=$("#pickerTitle"); if(tt) tt.textContent=`파일 담기 · ${labelOf(dept)}`;
+  const box=$("#pickerList"); if(!box) return;
+  box.innerHTML = items.length ? items.slice(0,400).map(p=>{
+    const t=esc(p.table).replace(/'/g,"\\'");
+    return `<div class="pick"><div class="pn" title="${esc(p.table)}">${fmtNameCell(p.table)}</div><span class="src">${esc(p.srcLabel)}</span><button class="btn-sm primary" onclick="addFav('${t}','${p.src_grp}')">담기</button></div>`;
+  }).join("") : `<div class="s-empty" style="padding:16px">담을 수 있는 파일이 없습니다(이미 다 담겼거나 목록 없음)</div>`;
+}
+async function addFav(table, srcGrp){
+  const r=await fetch("/api/fav/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table})});
+  if(!r.ok){const d=await r.json();toast(esc(d.error||"담기 실패"));return;}
+  await refresh(); renderPicker();
+}
+async function removeFav(table, srcGrp){
+  const r=await fetch("/api/fav/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table})});
+  if(!r.ok){const d=await r.json();toast(esc(d.error||"빼기 실패"));return;}
+  refresh();
 }
 
 // 탭 전환/최초 1회: 고정 뼈대(검색창 포함)를 만든다. 이후 새로고침은 renderDynamic 만 갱신 → 검색창 포커스 유지.
@@ -145,7 +200,7 @@ function renderTabStructure(){
   const g=GROUPS_DATA.find(x=>x.key===ACTIVE)||GROUPS_DATA[0];
   const box=$("#tab"); if(!box) return;
   if(!g){ box.innerHTML=""; return; }
-  const adminBar = ME.is_admin ? `
+  const adminBar = (ME.is_admin && g.kind==='sync') ? `
     <div class="bar">
       <label>SVN Repo 주소 (${esc(g.label)})</label>
       <input id="svn" placeholder="svn://..." style="flex:1;min-width:240px">
@@ -184,7 +239,11 @@ function renderDynamic(){
     });
   }
   const grid=$("#grid");
-  if(grid) grid.innerHTML = list.length ? list.map(cellHtml).join("") : `<div class="s-empty" style="padding:10px 4px">검색 결과가 없습니다</div>`;
+  if(grid){
+    let inner = list.map(cellHtml).join("");
+    if(groupKind(ACTIVE)==='dept') inner += `<div class="cell addcard" onclick="openPicker()" title="파일 담기"><div class="plus">+</div></div>`;
+    grid.innerHTML = inner || `<div class="s-empty" style="padding:10px 4px">검색 결과가 없습니다</div>`;
+  }
   const info=$("#searchInfo"); if(info) info.textContent = q ? `${list.length} / ${g.tables.length}` : `${g.tables.length}개`;
   const foot=$("#foot"); if(foot) foot.textContent = g.svn_repo_url?("SVN: "+g.svn_repo_url):"";
   if(ME.is_admin){ const el=$("#svn"); if(el && !SVN_LOADED[ACTIVE]){ el.value=g.svn_repo_url||""; SVN_LOADED[ACTIVE]=true; } }
@@ -202,14 +261,14 @@ async function refresh(){
   renderDynamic();
 }
 
-async function start(table){
-  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:ACTIVE})});
+async function start(table, grp){
+  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE})});
   if(r.status===409){const d=await r.json();
     toast(`⚠️ <b>${esc(table)}</b> 은(는) 이미 <b>${esc(d.holder.user_name)}</b>님이 사용 중입니다 (경과 ${d.holder.elapsed}).`);}
   refresh();
 }
-async function finish(table){
-  const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:ACTIVE})});
+async function finish(table, grp){
+  const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE})});
   if(!r.ok){const d=await r.json();toast(esc(d.error||"종료 실패"));}
   refresh();
 }

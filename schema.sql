@@ -29,6 +29,15 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT
 );
 
+-- 부서 탭(콘텐츠/시스템/전투/밸런스) 즐겨찾기. plan/dev 원본 파일을 참조만 함.
+CREATE TABLE IF NOT EXISTS favorites (
+  dept        TEXT NOT NULL,   -- content/system/battle/balance
+  src_grp     TEXT NOT NULL,   -- plan/dev (원본 탭)
+  table_name  TEXT NOT NULL,
+  sort_order  INTEGER DEFAULT 0,
+  PRIMARY KEY (dept, src_grp, table_name)
+);
+
 -- 이력(선택).
 CREATE TABLE IF NOT EXISTS history (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

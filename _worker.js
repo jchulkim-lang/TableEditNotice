@@ -53,6 +53,16 @@ const INDEX_HTML = `<!DOCTYPE html>
  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
  .tab{padding:8px 18px;border:1px solid var(--line);background:var(--panel);border-radius:10px;cursor:pointer;color:var(--muted);font-weight:700;font-size:14px}
  .tab:hover{border-color:#3a4150} .tab.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+ .addcard{display:flex;align-items:center;justify-content:center;min-height:66px;cursor:pointer;border-style:dashed;color:var(--muted)}
+ .addcard:hover{border-color:var(--accent);color:var(--accent)} .addcard .plus{font-size:32px;font-weight:700;line-height:1}
+ .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;place-items:center;z-index:60}
+ .modal.show{display:grid}
+ .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(560px,94vw);max-height:82vh;display:flex;flex-direction:column;overflow:hidden}
+ .modal-head{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+ .modal-head h2{font-size:15px;margin:0} .modal-list{overflow:auto;padding:6px 8px}
+ .pick{display:flex;align-items:center;gap:10px;padding:8px 8px;border-bottom:1px solid var(--line)}
+ .pick:last-child{border-bottom:none} .pick .pn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:14px}
+ .pick .src{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 8px;white-space:nowrap}
  .badge{font-size:12px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap}
  .b-free{color:var(--free);background:rgba(55,211,153,.12);border:1px solid rgba(55,211,153,.35)}
  .b-busy{color:var(--busy);background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.35)}
@@ -74,6 +84,12 @@ const INDEX_HTML = `<!DOCTYPE html>
 </style></head><body>
 <div class="wrap"><div id="app"></div></div>
 <div class="toast" id="toast"></div>
+<div class="modal" id="picker"><div class="modal-box">
+  <div class="modal-head"><h2 id="pickerTitle">파일 담기</h2>
+    <input id="pickerSearch" placeholder="검색…" style="flex:1;min-width:120px" oninput="renderPicker()" autocomplete="off">
+    <button class="btn" onclick="closePicker()">닫기</button></div>
+  <div class="modal-list" id="pickerList"></div>
+</div></div>
 <script>
 const $=s=>document.querySelector(s);
 let ME=null, POLL=null, GROUPS_DATA=[], ACTIVE="plan", SVN_LOADED={}, SEARCH="";
@@ -144,13 +160,52 @@ function renderTabs(){
 function switchTab(k){ ACTIVE=k; SEARCH=""; renderTabs(); renderTabStructure(); renderDynamic(); }
 function onSearch(v){ SEARCH=v; renderDynamic(); }
 
+function groupKind(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.kind:'sync'; }
+function labelOf(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.label:k; }
+
 function cellHtml(t){
   const tt=esc(t.table).replace(/'/g,"\\\\'");
+  const sg=t.src_grp||ACTIVE;
   let cls="",badge="",btn="";
-  if(!t.in_use){ badge=\`<span class="badge-sm b-free">● 사용 가능</span>\`; btn=\`<button class="btn-sm primary" onclick="start('\${tt}')">시작</button>\`; }
-  else if(t.user_email===ME.email){ cls="mine"; badge=\`<span class="badge-sm b-me" title="내가 사용 중 · 경과 \${t.elapsed}">👤 \${esc(t.user_name)}</span>\`; btn=\`<button class="btn-sm" onclick="finish('\${tt}')">종료</button>\`; }
-  else { cls="busy"; badge=\`<span class="badge-sm b-busy" title="사용 중 · 경과 \${t.elapsed}">👤 \${esc(t.user_name)}</span>\`; btn = ME.is_admin?\`<button class="btn-sm" onclick="finish('\${tt}')">강제종료</button>\`:\`\`; }
-  return \`<div class="cell \${cls}"><div class="top"><div class="nm" title="\${esc(t.table)}">\${fmtNameCell(t.table)}</div></div><div class="bot">\${badge}\${btn}</div></div>\`;
+  if(!t.in_use){ badge=\`<span class="badge-sm b-free">● 사용 가능</span>\`; btn=\`<button class="btn-sm primary" onclick="start('\${tt}','\${sg}')">시작</button>\`; }
+  else if(t.user_email===ME.email){ cls="mine"; badge=\`<span class="badge-sm b-me" title="내가 사용 중 · 경과 \${t.elapsed}">👤 \${esc(t.user_name)}</span>\`; btn=\`<button class="btn-sm" onclick="finish('\${tt}','\${sg}')">종료</button>\`; }
+  else { cls="busy"; badge=\`<span class="badge-sm b-busy" title="사용 중 · 경과 \${t.elapsed}">👤 \${esc(t.user_name)}</span>\`; btn = ME.is_admin?\`<button class="btn-sm" onclick="finish('\${tt}','\${sg}')">강제종료</button>\`:\`\`; }
+  const rm = (groupKind(ACTIVE)==='dept') ? \`<button class="btn-x" title="이 탭에서 빼기" onclick="removeFav('\${tt}','\${sg}')">✕</button>\` : "";
+  return \`<div class="cell \${cls}"><div class="top"><div class="nm" title="\${esc(t.table)}">\${fmtNameCell(t.table)}</div>\${rm}</div><div class="bot">\${badge}\${btn}</div></div>\`;
+}
+
+/* ---------- 부서 탭: 파일 담기 모달 ---------- */
+function openPicker(){ const s=$("#pickerSearch"); if(s) s.value=""; $("#picker").classList.add("show"); renderPicker(); }
+function closePicker(){ $("#picker").classList.remove("show"); }
+function availableForDept(dept){
+  const pool=[];
+  GROUPS_DATA.filter(g=>g.kind==="sync").forEach(g=> g.tables.forEach(t=> pool.push({table:t.table, src_grp:g.key, srcLabel:g.label})));
+  const dg=GROUPS_DATA.find(g=>g.key===dept);
+  const have=new Set((dg?dg.tables:[]).map(t=> (t.src_grp||"")+"|"+t.table));
+  return pool.filter(p=> !have.has(p.src_grp+"|"+p.table));
+}
+function renderPicker(){
+  const dept=ACTIVE;
+  const q=(($("#pickerSearch")||{}).value||"").trim().toLowerCase();
+  let items=availableForDept(dept);
+  if(q) items=items.filter(p=> p.table.toLowerCase().includes(q));
+  items.sort((a,b)=> String(a.table).split("/").pop().toLowerCase().localeCompare(String(b.table).split("/").pop().toLowerCase()));
+  const tt=$("#pickerTitle"); if(tt) tt.textContent=\`파일 담기 · \${labelOf(dept)}\`;
+  const box=$("#pickerList"); if(!box) return;
+  box.innerHTML = items.length ? items.slice(0,400).map(p=>{
+    const t=esc(p.table).replace(/'/g,"\\\\'");
+    return \`<div class="pick"><div class="pn" title="\${esc(p.table)}">\${fmtNameCell(p.table)}</div><span class="src">\${esc(p.srcLabel)}</span><button class="btn-sm primary" onclick="addFav('\${t}','\${p.src_grp}')">담기</button></div>\`;
+  }).join("") : \`<div class="s-empty" style="padding:16px">담을 수 있는 파일이 없습니다(이미 다 담겼거나 목록 없음)</div>\`;
+}
+async function addFav(table, srcGrp){
+  const r=await fetch("/api/fav/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table})});
+  if(!r.ok){const d=await r.json();toast(esc(d.error||"담기 실패"));return;}
+  await refresh(); renderPicker();
+}
+async function removeFav(table, srcGrp){
+  const r=await fetch("/api/fav/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table})});
+  if(!r.ok){const d=await r.json();toast(esc(d.error||"빼기 실패"));return;}
+  refresh();
 }
 
 // 탭 전환/최초 1회: 고정 뼈대(검색창 포함)를 만든다. 이후 새로고침은 renderDynamic 만 갱신 → 검색창 포커스 유지.
@@ -158,7 +213,7 @@ function renderTabStructure(){
   const g=GROUPS_DATA.find(x=>x.key===ACTIVE)||GROUPS_DATA[0];
   const box=$("#tab"); if(!box) return;
   if(!g){ box.innerHTML=""; return; }
-  const adminBar = ME.is_admin ? \`
+  const adminBar = (ME.is_admin && g.kind==='sync') ? \`
     <div class="bar">
       <label>SVN Repo 주소 (\${esc(g.label)})</label>
       <input id="svn" placeholder="svn://..." style="flex:1;min-width:240px">
@@ -197,7 +252,11 @@ function renderDynamic(){
     });
   }
   const grid=$("#grid");
-  if(grid) grid.innerHTML = list.length ? list.map(cellHtml).join("") : \`<div class="s-empty" style="padding:10px 4px">검색 결과가 없습니다</div>\`;
+  if(grid){
+    let inner = list.map(cellHtml).join("");
+    if(groupKind(ACTIVE)==='dept') inner += \`<div class="cell addcard" onclick="openPicker()" title="파일 담기"><div class="plus">+</div></div>\`;
+    grid.innerHTML = inner || \`<div class="s-empty" style="padding:10px 4px">검색 결과가 없습니다</div>\`;
+  }
   const info=$("#searchInfo"); if(info) info.textContent = q ? \`\${list.length} / \${g.tables.length}\` : \`\${g.tables.length}개\`;
   const foot=$("#foot"); if(foot) foot.textContent = g.svn_repo_url?("SVN: "+g.svn_repo_url):"";
   if(ME.is_admin){ const el=$("#svn"); if(el && !SVN_LOADED[ACTIVE]){ el.value=g.svn_repo_url||""; SVN_LOADED[ACTIVE]=true; } }
@@ -215,14 +274,14 @@ async function refresh(){
   renderDynamic();
 }
 
-async function start(table){
-  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:ACTIVE})});
+async function start(table, grp){
+  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE})});
   if(r.status===409){const d=await r.json();
     toast(\`⚠️ <b>\${esc(table)}</b> 은(는) 이미 <b>\${esc(d.holder.user_name)}</b>님이 사용 중입니다 (경과 \${d.holder.elapsed}).\`);}
   refresh();
 }
-async function finish(table){
-  const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:ACTIVE})});
+async function finish(table, grp){
+  const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE})});
   if(!r.ok){const d=await r.json();toast(esc(d.error||"종료 실패"));}
   refresh();
 }
@@ -264,6 +323,10 @@ export default {
         if (path === "/api/start" && request.method === "POST") return apiStart(request, env, user, url);
         if (path === "/api/finish" && request.method === "POST") return apiFinish(request, env, user, url, admin);
         if (path === "/api/config" && request.method === "GET") return apiGetConfig(env);
+
+        // ---- 부서 탭 즐겨찾기(로그인 사용자면 누구나) ----
+        if (path === "/api/fav/add" && request.method === "POST") return apiFavAdd(request, env);
+        if (path === "/api/fav/remove" && request.method === "POST") return apiFavRemove(request, env);
 
         // ---- 관리자 전용 ----
         if (path === "/api/config" && request.method === "POST") {
@@ -323,10 +386,19 @@ function isAdmin(env, user) {
 }
 
 /* ---------------- 탭(그룹) ---------------- */
-const GROUPS = [{ key: "plan", label: "기획" }, { key: "dev", label: "개발" }];
+const GROUPS = [
+  { key: "plan", label: "기획", kind: "sync" },
+  { key: "dev", label: "개발", kind: "sync" },
+  { key: "content", label: "콘텐츠", kind: "dept" },
+  { key: "system", label: "시스템", kind: "dept" },
+  { key: "battle", label: "전투", kind: "dept" },
+  { key: "balance", label: "밸런스", kind: "dept" },
+];
 function groupKeys() { return GROUPS.map(g => g.key); }
 function normGroup(g) { g = (g || "").trim(); return groupKeys().includes(g) ? g : "plan"; }
 function groupLabel(g) { const x = GROUPS.find(v => v.key === g); return x ? x.label : g; }
+function isSyncGroup(k) { const g = GROUPS.find(v => v.key === k); return !!g && g.kind === "sync"; }
+function isDeptGroup(k) { const g = GROUPS.find(v => v.key === k); return !!g && g.kind === "dept"; }
 
 /* ---------------- 세션 ---------------- */
 async function makeSession(user, secret) {
@@ -387,16 +459,25 @@ async function apiStatus(env, url) {
   try { await maybeRemindStale(env, url); } catch {}   // 1시간 초과 점유 알림(조회 시 확인)
   const allTables = (await env.DB.prepare("SELECT grp, table_name, memo FROM tables ORDER BY grp, sort_order, table_name").all()).results || [];
   const allEditing = (await env.DB.prepare("SELECT grp, table_name, user_email, user_name, started_at, note FROM editing").all()).results || [];
-  const key = (g, n) => (g || "plan") + " " + n;
+  const key = (g, n) => (g || "plan") + " " + n;
   const emap = {}; for (const e of allEditing) emap[key(e.grp, e.table_name)] = e;
+  const tmemo = {}; for (const t of allTables) tmemo[key(t.grp, t.table_name)] = t.memo || "";
+  let favs = [];
+  try { favs = (await env.DB.prepare("SELECT dept, src_grp, table_name, sort_order FROM favorites ORDER BY dept, sort_order, table_name").all()).results || []; } catch {}
   const groups = [];
   for (const g of GROUPS) {
-    const svn = await getSetting(env, "svn_repo_url_" + g.key, "");
-    const tabs = allTables.filter(t => (t.grp || "plan") === g.key);
-    const names = new Set(tabs.map(t => t.table_name));
-    const rows = tabs.map(t => rowOf(t.table_name, t.memo, emap[key(g.key, t.table_name)]));
-    for (const e of allEditing) if ((e.grp || "plan") === g.key && !names.has(e.table_name)) rows.push(rowOf(e.table_name, "", e));
-    groups.push({ key: g.key, label: g.label, svn_repo_url: svn, tables: rows });
+    if (g.kind === "sync") {
+      const svn = await getSetting(env, "svn_repo_url_" + g.key, "");
+      const tabs = allTables.filter(t => (t.grp || "plan") === g.key);
+      const names = new Set(tabs.map(t => t.table_name));
+      const rows = tabs.map(t => ({ ...rowOf(t.table_name, t.memo, emap[key(g.key, t.table_name)]), src_grp: g.key }));
+      for (const e of allEditing) if ((e.grp || "plan") === g.key && !names.has(e.table_name)) rows.push({ ...rowOf(e.table_name, "", e), src_grp: g.key });
+      groups.push({ key: g.key, label: g.label, kind: "sync", svn_repo_url: svn, tables: rows });
+    } else {
+      const items = favs.filter(f => f.dept === g.key);
+      const rows = items.map(f => ({ ...rowOf(f.table_name, tmemo[key(f.src_grp, f.table_name)] || "", emap[key(f.src_grp, f.table_name)]), src_grp: f.src_grp }));
+      groups.push({ key: g.key, label: g.label, kind: "dept", tables: rows });
+    }
   }
   return json({ groups });
 }
@@ -469,6 +550,29 @@ async function apiTableRemove(request, env) {
   if (!name) return json({ ok: false, error: "table_name 필수" }, 400);
   await env.DB.prepare("DELETE FROM tables WHERE table_name=?").bind(name).run();
   await env.DB.prepare("DELETE FROM editing WHERE table_name=?").bind(name).run();
+  return json({ ok: true });
+}
+
+// 부서 탭(콘텐츠/시스템/전투/밸런스)에 파일 담기/빼기 — 원본(plan/dev) 파일을 참조만 한다.
+async function apiFavAdd(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const dept = (body.dept || "").trim();
+  const src = normGroup(body.src_grp);
+  const name = (body.table_name || "").trim();
+  if (!isDeptGroup(dept)) return json({ ok: false, error: "부서 탭이 아닙니다." }, 400);
+  if (!isSyncGroup(src)) return json({ ok: false, error: "원본 탭(기획/개발)만 담을 수 있습니다." }, 400);
+  if (!name) return json({ ok: false, error: "table_name 필수" }, 400);
+  const max = await env.DB.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM favorites WHERE dept=?").bind(dept).first();
+  await env.DB.prepare("INSERT OR IGNORE INTO favorites(dept,src_grp,table_name,sort_order) VALUES(?,?,?,?)")
+    .bind(dept, src, name, (max.m || 0) + 1).run();
+  return json({ ok: true });
+}
+async function apiFavRemove(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const dept = (body.dept || "").trim();
+  const src = normGroup(body.src_grp);
+  const name = (body.table_name || "").trim();
+  await env.DB.prepare("DELETE FROM favorites WHERE dept=? AND src_grp=? AND table_name=?").bind(dept, src, name).run();
   return json({ ok: true });
 }
 
