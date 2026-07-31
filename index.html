@@ -40,6 +40,10 @@
  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
  .tab{padding:8px 18px;border:1px solid var(--line);background:var(--panel);border-radius:10px;cursor:pointer;color:var(--muted);font-weight:700;font-size:14px}
  .tab:hover{border-color:#3a4150} .tab.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+ .tab-div{width:1px;align-self:stretch;background:var(--line);margin:0 8px}
+ .tab.dept{color:#9db4ff;border-color:rgba(91,140,255,.35);background:rgba(91,140,255,.07)}
+ .tab.dept:hover{border-color:var(--me)}
+ .tab.dept.active{background:var(--me);color:#fff;border-color:var(--me)}
  .addcard{display:flex;align-items:center;justify-content:center;min-height:66px;cursor:pointer;border-style:dashed;color:var(--muted)}
  .addcard:hover{border-color:var(--accent);color:var(--accent)} .addcard .plus{font-size:32px;font-weight:700;line-height:1}
  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;place-items:center;z-index:60}
@@ -139,10 +143,15 @@ function renderBoard(){
 }
 function renderTabs(){
   const el=$("#tabs"); if(!el) return;
-  el.innerHTML=GROUPS_DATA.map(g=>{
+  let html="", divAdded=false;
+  GROUPS_DATA.forEach(g=>{
+    if(g.kind==="dept" && !divAdded){ html+=`<span class="tab-div"></span>`; divAdded=true; }
     const n=g.tables.filter(t=>t.in_use).length;
-    return `<button class="tab ${g.key===ACTIVE?'active':''}" onclick="switchTab('${g.key}')">${esc(g.label)}${n?` · ${n}`:""}</button>`;
-  }).join("");
+    const cls="tab"+(g.kind==="dept"?" dept":"")+(g.key===ACTIVE?" active":"");
+    const icon = g.kind==="dept" ? "★ " : "";
+    html+=`<button class="${cls}" onclick="switchTab('${g.key}')">${icon}${esc(g.label)}${n?` · ${n}`:""}</button>`;
+  });
+  el.innerHTML=html;
 }
 function switchTab(k){ ACTIVE=k; SEARCH=""; renderTabs(); renderTabStructure(); renderDynamic(); }
 function onSearch(v){ SEARCH=v; renderDynamic(); }
