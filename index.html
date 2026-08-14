@@ -44,6 +44,9 @@
  .tab.dept{color:#9db4ff;border-color:rgba(91,140,255,.35);background:rgba(91,140,255,.07)}
  .tab.dept:hover{border-color:var(--me)}
  .tab.dept.active{background:var(--me);color:#fff;border-color:var(--me)}
+ .lineseg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel2)}
+ .lineseg button{border:none;background:transparent;color:var(--muted);font-weight:800;font-size:13px;padding:7px 18px;cursor:pointer}
+ .lineseg button.on.trunk{background:var(--accent);color:var(--accent-ink)} .lineseg button.on.branch{background:#ff9f43;color:#3a2400}
  .addcard{display:flex;align-items:center;justify-content:center;min-height:66px;cursor:pointer;border-style:dashed;color:var(--muted)}
  .addcard:hover{border-color:var(--accent);color:var(--accent)} .addcard .plus{font-size:32px;font-weight:700;line-height:1}
  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;place-items:center;z-index:60}
@@ -84,6 +87,7 @@
 <script>
 const $=s=>document.querySelector(s);
 let ME=null, POLL=null, GROUPS_DATA=[], ACTIVE="plan", SVN_LOADED={}, SEARCH="";
+let ACTIVE_LINE="trunk", LINES_DATA=[{key:"trunk",label:"Trunk"},{key:"branch",label:"Branch"}];
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
 function fmtName(name){
   name=String(name||"");
@@ -135,6 +139,8 @@ function renderBoard(){
     <div class="sub">누가 어떤 테이블을 쓰는지 실시간으로 표시됩니다. 수정할 때만 <b>사용 시작</b>을 눌러주세요.</div>
     <div class="bar">
       <span class="who"><span class="pill">👤 ${esc(ME.name)} · ${esc(ME.email)}</span>${adminBadge}</span>
+      <span style="flex:1"></span>
+      <span class="pill">라인</span><span class="lineseg" id="lineseg"></span>
       <button class="btn" onclick="logout()">로그아웃</button>
     </div>
     <div class="tabs" id="tabs"></div>
@@ -155,6 +161,11 @@ function renderTabs(){
 }
 function switchTab(k){ ACTIVE=k; SEARCH=""; renderTabs(); renderTabStructure(); renderDynamic(); }
 function onSearch(v){ SEARCH=v; renderDynamic(); }
+function renderLineSeg(){
+  const el=$("#lineseg"); if(!el) return;
+  el.innerHTML=LINES_DATA.map(l=> `<button class="${l.key===ACTIVE_LINE?('on '+l.key):''}" onclick="switchLine('${l.key}')">${esc(l.label)}</button>`).join("");
+}
+function switchLine(k){ if(k===ACTIVE_LINE) return; ACTIVE_LINE=k; SVN_LOADED={}; SEARCH=""; renderLineSeg(); refresh(); }
 
 function groupKind(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.kind:'sync'; }
 function labelOf(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.label:k; }
@@ -194,12 +205,12 @@ function renderPicker(){
   }).join("") : `<div class="s-empty" style="padding:16px">담을 수 있는 파일이 없습니다(이미 다 담겼거나 목록 없음)</div>`;
 }
 async function addFav(table, srcGrp){
-  const r=await fetch("/api/fav/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table})});
+  const r=await fetch("/api/fav/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table,line:ACTIVE_LINE})});
   if(!r.ok){const d=await r.json();toast(esc(d.error||"담기 실패"));return;}
   await refresh(); renderPicker();
 }
 async function removeFav(table, srcGrp){
-  const r=await fetch("/api/fav/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table})});
+  const r=await fetch("/api/fav/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table,line:ACTIVE_LINE})});
   if(!r.ok){const d=await r.json();toast(esc(d.error||"빼기 실패"));return;}
   refresh();
 }
@@ -260,30 +271,33 @@ function renderDynamic(){
 
 async function refresh(){
   if(!ME) return;
-  const r=await fetch("/api/status");
+  const r=await fetch("/api/status?line="+encodeURIComponent(ACTIVE_LINE));
   if(r.status===401){ ME=null; renderLogin(); return; }
   const d=await r.json();
+  if(d.lines) LINES_DATA=d.lines;
+  if(d.line) ACTIVE_LINE=d.line;
   GROUPS_DATA=d.groups||[];
   if(!GROUPS_DATA.find(g=>g.key===ACTIVE) && GROUPS_DATA[0]) ACTIVE=GROUPS_DATA[0].key;
+  renderLineSeg();
   renderTabs();
   if(!$("#grid")) renderTabStructure();
   renderDynamic();
 }
 
 async function start(table, grp){
-  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE})});
+  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE,line:ACTIVE_LINE})});
   if(r.status===409){const d=await r.json();
     toast(`⚠️ <b>${esc(table)}</b> 은(는) 이미 <b>${esc(d.holder.user_name)}</b>님이 사용 중입니다 (경과 ${d.holder.elapsed}).`);}
   refresh();
 }
 async function finish(table, grp){
-  const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE})});
+  const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE,line:ACTIVE_LINE})});
   if(!r.ok){const d=await r.json();toast(esc(d.error||"종료 실패"));}
   refresh();
 }
 async function saveSvn(){
   const v=($("#svn").value||"").trim();
-  const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({group:ACTIVE,svn_repo_url:v})});
+  const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({group:ACTIVE,line:ACTIVE_LINE,svn_repo_url:v})});
   const d=await r.json();
   const m=$("#svnMsg"); if(m){ m.textContent = r.ok && d.ok ? "저장됨 ✓" : (d.error||"저장 실패");
     setTimeout(()=>{ if($("#svnMsg")) $("#svnMsg").textContent="관리자만 수정 · 목록은 동기화(bat)로 채워집니다"; },2600); }

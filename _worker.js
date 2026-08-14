@@ -57,6 +57,9 @@ const INDEX_HTML = `<!DOCTYPE html>
  .tab.dept{color:#9db4ff;border-color:rgba(91,140,255,.35);background:rgba(91,140,255,.07)}
  .tab.dept:hover{border-color:var(--me)}
  .tab.dept.active{background:var(--me);color:#fff;border-color:var(--me)}
+ .lineseg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel2)}
+ .lineseg button{border:none;background:transparent;color:var(--muted);font-weight:800;font-size:13px;padding:7px 18px;cursor:pointer}
+ .lineseg button.on.trunk{background:var(--accent);color:var(--accent-ink)} .lineseg button.on.branch{background:#ff9f43;color:#3a2400}
  .addcard{display:flex;align-items:center;justify-content:center;min-height:66px;cursor:pointer;border-style:dashed;color:var(--muted)}
  .addcard:hover{border-color:var(--accent);color:var(--accent)} .addcard .plus{font-size:32px;font-weight:700;line-height:1}
  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;place-items:center;z-index:60}
@@ -97,6 +100,7 @@ const INDEX_HTML = `<!DOCTYPE html>
 <script>
 const $=s=>document.querySelector(s);
 let ME=null, POLL=null, GROUPS_DATA=[], ACTIVE="plan", SVN_LOADED={}, SEARCH="";
+let ACTIVE_LINE="trunk", LINES_DATA=[{key:"trunk",label:"Trunk"},{key:"branch",label:"Branch"}];
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
 function fmtName(name){
   name=String(name||"");
@@ -148,6 +152,8 @@ function renderBoard(){
     <div class="sub">누가 어떤 테이블을 쓰는지 실시간으로 표시됩니다. 수정할 때만 <b>사용 시작</b>을 눌러주세요.</div>
     <div class="bar">
       <span class="who"><span class="pill">👤 \${esc(ME.name)} · \${esc(ME.email)}</span>\${adminBadge}</span>
+      <span style="flex:1"></span>
+      <span class="pill">라인</span><span class="lineseg" id="lineseg"></span>
       <button class="btn" onclick="logout()">로그아웃</button>
     </div>
     <div class="tabs" id="tabs"></div>
@@ -168,6 +174,11 @@ function renderTabs(){
 }
 function switchTab(k){ ACTIVE=k; SEARCH=""; renderTabs(); renderTabStructure(); renderDynamic(); }
 function onSearch(v){ SEARCH=v; renderDynamic(); }
+function renderLineSeg(){
+  const el=$("#lineseg"); if(!el) return;
+  el.innerHTML=LINES_DATA.map(l=> \`<button class="\${l.key===ACTIVE_LINE?('on '+l.key):''}" onclick="switchLine('\${l.key}')">\${esc(l.label)}</button>\`).join("");
+}
+function switchLine(k){ if(k===ACTIVE_LINE) return; ACTIVE_LINE=k; SVN_LOADED={}; SEARCH=""; renderLineSeg(); refresh(); }
 
 function groupKind(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.kind:'sync'; }
 function labelOf(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.label:k; }
@@ -207,12 +218,12 @@ function renderPicker(){
   }).join("") : \`<div class="s-empty" style="padding:16px">담을 수 있는 파일이 없습니다(이미 다 담겼거나 목록 없음)</div>\`;
 }
 async function addFav(table, srcGrp){
-  const r=await fetch("/api/fav/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table})});
+  const r=await fetch("/api/fav/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table,line:ACTIVE_LINE})});
   if(!r.ok){const d=await r.json();toast(esc(d.error||"담기 실패"));return;}
   await refresh(); renderPicker();
 }
 async function removeFav(table, srcGrp){
-  const r=await fetch("/api/fav/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table})});
+  const r=await fetch("/api/fav/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dept:ACTIVE,src_grp:srcGrp,table_name:table,line:ACTIVE_LINE})});
   if(!r.ok){const d=await r.json();toast(esc(d.error||"빼기 실패"));return;}
   refresh();
 }
@@ -273,30 +284,33 @@ function renderDynamic(){
 
 async function refresh(){
   if(!ME) return;
-  const r=await fetch("/api/status");
+  const r=await fetch("/api/status?line="+encodeURIComponent(ACTIVE_LINE));
   if(r.status===401){ ME=null; renderLogin(); return; }
   const d=await r.json();
+  if(d.lines) LINES_DATA=d.lines;
+  if(d.line) ACTIVE_LINE=d.line;
   GROUPS_DATA=d.groups||[];
   if(!GROUPS_DATA.find(g=>g.key===ACTIVE) && GROUPS_DATA[0]) ACTIVE=GROUPS_DATA[0].key;
+  renderLineSeg();
   renderTabs();
   if(!$("#grid")) renderTabStructure();
   renderDynamic();
 }
 
 async function start(table, grp){
-  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE})});
+  const r=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE,line:ACTIVE_LINE})});
   if(r.status===409){const d=await r.json();
     toast(\`⚠️ <b>\${esc(table)}</b> 은(는) 이미 <b>\${esc(d.holder.user_name)}</b>님이 사용 중입니다 (경과 \${d.holder.elapsed}).\`);}
   refresh();
 }
 async function finish(table, grp){
-  const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE})});
+  const r=await fetch("/api/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table,group:grp||ACTIVE,line:ACTIVE_LINE})});
   if(!r.ok){const d=await r.json();toast(esc(d.error||"종료 실패"));}
   refresh();
 }
 async function saveSvn(){
   const v=($("#svn").value||"").trim();
-  const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({group:ACTIVE,svn_repo_url:v})});
+  const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({group:ACTIVE,line:ACTIVE_LINE,svn_repo_url:v})});
   const d=await r.json();
   const m=$("#svnMsg"); if(m){ m.textContent = r.ok && d.ok ? "저장됨 ✓" : (d.error||"저장 실패");
     setTimeout(()=>{ if($("#svnMsg")) $("#svnMsg").textContent="관리자만 수정 · 목록은 동기화(bat)로 채워집니다"; },2600); }
@@ -409,6 +423,12 @@ function groupLabel(g) { const x = GROUPS.find(v => v.key === g); return x ? x.l
 function isSyncGroup(k) { const g = GROUPS.find(v => v.key === k); return !!g && g.kind === "sync"; }
 function isDeptGroup(k) { const g = GROUPS.find(v => v.key === k); return !!g && g.kind === "dept"; }
 
+/* ---------------- 라인(Trunk/Branch) ---------------- */
+const LINES = [{ key: "trunk", label: "Trunk" }, { key: "branch", label: "Branch" }];
+function lineKeys() { return LINES.map(l => l.key); }
+function normLine(l) { l = (l || "").trim(); return lineKeys().includes(l) ? l : "trunk"; }
+function lineLabel(l) { const x = LINES.find(v => v.key === l); return x ? x.label : l; }
+
 /* ---------------- 세션 ---------------- */
 async function makeSession(user, secret) {
   const payload = { email: user.email, name: user.name, exp: nowSec() + 60 * 60 * 12 };
@@ -465,18 +485,19 @@ async function apiMe(request, env) {
 
 /* ---------------- 현황 ---------------- */
 async function apiStatus(env, url) {
+  const line = normLine(url.searchParams.get("line"));
   try { await maybeRemindStale(env, url); } catch {}   // 1시간 초과 점유 알림(조회 시 확인)
-  const allTables = (await env.DB.prepare("SELECT grp, table_name, memo FROM tables ORDER BY grp, sort_order, table_name").all()).results || [];
-  const allEditing = (await env.DB.prepare("SELECT grp, table_name, user_email, user_name, started_at, note FROM editing").all()).results || [];
+  const allTables = (await env.DB.prepare("SELECT grp, table_name, memo FROM tables WHERE line=? ORDER BY grp, sort_order, table_name").bind(line).all()).results || [];
+  const allEditing = (await env.DB.prepare("SELECT grp, table_name, user_email, user_name, started_at, note FROM editing WHERE line=?").bind(line).all()).results || [];
   const key = (g, n) => (g || "plan") + " " + n;
   const emap = {}; for (const e of allEditing) emap[key(e.grp, e.table_name)] = e;
   const tmemo = {}; for (const t of allTables) tmemo[key(t.grp, t.table_name)] = t.memo || "";
   let favs = [];
-  try { favs = (await env.DB.prepare("SELECT dept, src_grp, table_name, sort_order FROM favorites ORDER BY dept, sort_order, table_name").all()).results || []; } catch {}
+  try { favs = (await env.DB.prepare("SELECT dept, src_grp, table_name, sort_order FROM favorites WHERE line=? ORDER BY dept, sort_order, table_name").bind(line).all()).results || []; } catch {}
   const groups = [];
   for (const g of GROUPS) {
     if (g.kind === "sync") {
-      const svn = await getSetting(env, "svn_repo_url_" + g.key, "");
+      const svn = await getSetting(env, "svn_repo_url_" + line + "_" + g.key, "");
       const tabs = allTables.filter(t => (t.grp || "plan") === g.key);
       const names = new Set(tabs.map(t => t.table_name));
       const rows = tabs.map(t => ({ ...rowOf(t.table_name, t.memo, emap[key(g.key, t.table_name)]), src_grp: g.key }));
@@ -488,7 +509,7 @@ async function apiStatus(env, url) {
       groups.push({ key: g.key, label: g.label, kind: "dept", tables: rows });
     }
   }
-  return json({ groups });
+  return json({ line, lines: LINES, groups });
 }
 function rowOf(name, memo, e) {
   return {
@@ -502,46 +523,50 @@ function rowOf(name, memo, e) {
 }
 async function apiStart(request, env, user, url) {
   const body = await request.json().catch(() => ({}));
+  const line = normLine(body.line);
   const grp = normGroup(body.group);
   const table = (body.table || "").trim();
   const note = (body.note || "").trim();
   if (!table) return json({ ok: false, error: "table 필수" }, 400);
-  const tag = `(${groupLabel(grp)})`;
+  const tag = `(${lineLabel(line)}·${groupLabel(grp)})`;
   const ins = await env.DB.prepare(
-    "INSERT INTO editing(grp,table_name,user_email,user_name,started_at,note) VALUES(?,?,?,?,?,?) ON CONFLICT(grp,table_name) DO NOTHING"
-  ).bind(grp, table, user.email, user.name, nowIso(), note).run();
+    "INSERT INTO editing(line,grp,table_name,user_email,user_name,started_at,note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(line,grp,table_name) DO NOTHING"
+  ).bind(line, grp, table, user.email, user.name, nowIso(), note).run();
   if (ins.meta.changes === 1) {
-    await logHistory(env, grp, table, user.email, "start");
+    await logHistory(env, line, grp, table, user.email, "start");
     await notify(env, url, `✏️ [시작] ${tag} ${table} · ${user.name} · ${hhmm()}`);
     return json({ ok: true });
   }
-  const row = await env.DB.prepare("SELECT * FROM editing WHERE grp=? AND table_name=?").bind(grp, table).first();
+  const row = await env.DB.prepare("SELECT * FROM editing WHERE line=? AND grp=? AND table_name=?").bind(line, grp, table).first();
   if (row && row.user_email === user.email) return json({ ok: true, already_mine: true });
-  await logHistory(env, grp, table, user.email, "conflict");
+  await logHistory(env, line, grp, table, user.email, "conflict");
   await notify(env, url, `⚠️ [중복] ${tag} ${table} · 이미 ${row.user_name || row.user_email}님 사용 중(${humanDuration(row.started_at)}) · 시도 ${user.name}`);
   return json({ ok: false, conflict: true, holder: { user_name: row.user_name || row.user_email, elapsed: humanDuration(row.started_at) } }, 409);
 }
 async function apiFinish(request, env, user, url, admin) {
   const body = await request.json().catch(() => ({}));
+  const line = normLine(body.line);
   const grp = normGroup(body.group);
   const table = (body.table || "").trim();
-  const row = await env.DB.prepare("SELECT * FROM editing WHERE grp=? AND table_name=?").bind(grp, table).first();
+  const row = await env.DB.prepare("SELECT * FROM editing WHERE line=? AND grp=? AND table_name=?").bind(line, grp, table).first();
   if (!row) return json({ ok: false, error: "현재 편집 중이 아닙니다." }, 400);
   if (row.user_email !== user.email && !admin)
     return json({ ok: false, error: `${row.user_name || row.user_email}님이 편집 중입니다. 본인 것만 종료할 수 있습니다.` }, 403);
-  await env.DB.prepare("DELETE FROM editing WHERE grp=? AND table_name=?").bind(grp, table).run();
-  await logHistory(env, grp, table, user.email, "finish");
-  await notify(env, url, `✅ [완료] (${groupLabel(grp)}) ${table} · ${row.user_name || row.user_email} · 소요 ${humanDuration(row.started_at)}`);
+  await env.DB.prepare("DELETE FROM editing WHERE line=? AND grp=? AND table_name=?").bind(line, grp, table).run();
+  await logHistory(env, line, grp, table, user.email, "finish");
+  await notify(env, url, `✅ [완료] (${lineLabel(line)}·${groupLabel(grp)}) ${table} · ${row.user_name || row.user_email} · 소요 ${humanDuration(row.started_at)}`);
   return json({ ok: true });
 }
 
 /* ---------------- 설정/테이블(관리자) ---------------- */
-async function apiGetConfig(env) { return json({ svn_repo_url: await getSetting(env, "svn_repo_url_plan", "") }); }
+async function apiGetConfig(env) { return json({ svn_repo_url: await getSetting(env, "svn_repo_url_trunk_plan", "") }); }
 async function apiSetConfig(request, env) {
   const body = await request.json().catch(() => ({}));
+  const line = normLine(body.line);
   const grp = normGroup(body.group);
-  if (typeof body.svn_repo_url === "string") await setSetting(env, "svn_repo_url_" + grp, body.svn_repo_url.trim());
-  return json({ ok: true, svn_repo_url: await getSetting(env, "svn_repo_url_" + grp, "") });
+  const k = "svn_repo_url_" + line + "_" + grp;
+  if (typeof body.svn_repo_url === "string") await setSetting(env, k, body.svn_repo_url.trim());
+  return json({ ok: true, svn_repo_url: await getSetting(env, k, "") });
 }
 async function apiTableAdd(request, env) {
   const body = await request.json().catch(() => ({}));
@@ -571,17 +596,19 @@ async function apiFavAdd(request, env) {
   if (!isDeptGroup(dept)) return json({ ok: false, error: "부서 탭이 아닙니다." }, 400);
   if (!isSyncGroup(src)) return json({ ok: false, error: "원본 탭(기획/개발)만 담을 수 있습니다." }, 400);
   if (!name) return json({ ok: false, error: "table_name 필수" }, 400);
-  const max = await env.DB.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM favorites WHERE dept=?").bind(dept).first();
-  await env.DB.prepare("INSERT OR IGNORE INTO favorites(dept,src_grp,table_name,sort_order) VALUES(?,?,?,?)")
-    .bind(dept, src, name, (max.m || 0) + 1).run();
+  const line = normLine(body.line);
+  const max = await env.DB.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM favorites WHERE line=? AND dept=?").bind(line, dept).first();
+  await env.DB.prepare("INSERT OR IGNORE INTO favorites(line,dept,src_grp,table_name,sort_order) VALUES(?,?,?,?,?)")
+    .bind(line, dept, src, name, (max.m || 0) + 1).run();
   return json({ ok: true });
 }
 async function apiFavRemove(request, env) {
   const body = await request.json().catch(() => ({}));
+  const line = normLine(body.line);
   const dept = (body.dept || "").trim();
   const src = normGroup(body.src_grp);
   const name = (body.table_name || "").trim();
-  await env.DB.prepare("DELETE FROM favorites WHERE dept=? AND src_grp=? AND table_name=?").bind(dept, src, name).run();
+  await env.DB.prepare("DELETE FROM favorites WHERE line=? AND dept=? AND src_grp=? AND table_name=?").bind(line, dept, src, name).run();
   return json({ ok: true });
 }
 
@@ -593,19 +620,20 @@ async function apiTablesSync(request, env) {
   const body = await request.json().catch(() => ({}));
   const items = Array.isArray(body.tables) ? body.tables : null;
   if (!items) return json({ ok: false, error: "tables 배열 필요" }, 400);
+  const line = normLine(body.line);
   const grp = normGroup(body.group);
-  // 해당 그룹(탭)의 목록만 교체
-  await env.DB.prepare("DELETE FROM tables WHERE grp=?").bind(grp).run();
+  // 해당 라인+그룹(탭)의 목록만 교체
+  await env.DB.prepare("DELETE FROM tables WHERE line=? AND grp=?").bind(line, grp).run();
   let i = 0;
   for (const it of items) {
     const name = typeof it === "string" ? it : (it && it.table_name);
     const memo = typeof it === "string" ? "" : ((it && it.memo) || "");
     if (!name) continue;
     i++;
-    await env.DB.prepare("INSERT OR IGNORE INTO tables(grp,table_name,memo,sort_order) VALUES(?,?,?,?)").bind(grp, name, memo, i).run();
+    await env.DB.prepare("INSERT OR IGNORE INTO tables(line,grp,table_name,memo,sort_order) VALUES(?,?,?,?,?)").bind(line, grp, name, memo, i).run();
   }
-  if (typeof body.svn_repo_url === "string") await setSetting(env, "svn_repo_url_" + grp, body.svn_repo_url.trim());
-  return json({ ok: true, count: i, group: grp });
+  if (typeof body.svn_repo_url === "string") await setSetting(env, "svn_repo_url_" + line + "_" + grp, body.svn_repo_url.trim());
+  return json({ ok: true, count: i, line: line, group: grp });
 }
 
 async function getSetting(env, key, dflt) {
@@ -615,8 +643,8 @@ async function getSetting(env, key, dflt) {
 async function setSetting(env, key, value) {
   await env.DB.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key, value).run();
 }
-async function logHistory(env, grp, table, email, action) {
-  try { await env.DB.prepare("INSERT INTO history(grp,table_name,user_email,action,at) VALUES(?,?,?,?,?)").bind(grp, table, email, action, nowIso()).run(); } catch {}
+async function logHistory(env, line, grp, table, email, action) {
+  try { await env.DB.prepare("INSERT INTO history(line,grp,table_name,user_email,action,at) VALUES(?,?,?,?,?,?)").bind(line, grp, table, email, action, nowIso()).run(); } catch {}
 }
 
 /* ---------------- 장시간 점유 알림(1시간) ---------------- */
@@ -624,14 +652,15 @@ async function maybeRemindStale(env, url) {
   const mins = parseInt(env.STALE_MINUTES) || 60;   // 기본 60분
   const cutoff = new Date(Date.now() - mins * 60 * 1000).toISOString();
   const stale = (await env.DB.prepare(
-    "SELECT grp, table_name, user_name, user_email FROM editing WHERE reminded=0 AND started_at <= ?"
+    "SELECT line, grp, table_name, user_name, user_email FROM editing WHERE reminded=0 AND started_at <= ?"
   ).bind(cutoff).all()).results || [];
   for (const r of stale) {
+    const ln = r.line || "trunk";
     // 원자적으로 '한 번만' 클레임 → 중복 발송 방지
-    const claim = await env.DB.prepare("UPDATE editing SET reminded=1 WHERE grp=? AND table_name=? AND reminded=0").bind(r.grp || "plan", r.table_name).run();
+    const claim = await env.DB.prepare("UPDATE editing SET reminded=1 WHERE line=? AND grp=? AND table_name=? AND reminded=0").bind(ln, r.grp || "plan", r.table_name).run();
     if (claim.meta.changes === 1) {
       const who = r.user_name || r.user_email;
-      await notify(env, url, `⏰ [1시간 경과] (${groupLabel(r.grp || "plan")}) ${r.table_name} · ${who}님, 벌써 1시간째 잡고 계신데요…😏 진짜 계속 편집 중인 거 맞죠? 혹시 '완료' 누르는 거 깜빡하신 거 아니고요~?`);
+      await notify(env, url, `⏰ [1시간 경과] (${lineLabel(ln)}·${groupLabel(r.grp || "plan")}) ${r.table_name} · ${who}님, 벌써 1시간째 잡고 계신데요…😏 진짜 계속 편집 중인 거 맞죠? 혹시 '완료' 누르는 거 깜빡하신 거 아니고요~?`);
     }
   }
 }
