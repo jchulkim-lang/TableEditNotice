@@ -173,9 +173,36 @@ async function apiMe(request, env) {
 }
 
 /* ---------------- 현황 ---------------- */
+/* 폴링 절약: 보드 상태가 바뀔 때마다 settings.state_ver 를 1 올린다.
+   조회 요청이 같은 버전을 들고 오면 D1 을 더 읽지 않고 unchanged 만 돌려준다. */
+let LAST_STALE_CHECK = 0;
+const STALE_CHECK_MS = 5 * 60 * 1000;
+
+async function getVer(env) {
+  try {
+    const r = await env.DB.prepare("SELECT value FROM settings WHERE key='state_ver'").first();
+    return r ? String(r.value) : "0";
+  } catch { return null; }
+}
+async function bumpVer(env) {
+  try {
+    await env.DB.prepare(
+      "INSERT INTO settings(key,value) VALUES('state_ver','1') ON CONFLICT(key) DO UPDATE SET value = CAST(settings.value AS INTEGER) + 1"
+    ).run();
+  } catch {}
+}
+
 async function apiStatus(env, url) {
   const line = normLine(url.searchParams.get("line"));
-  try { await maybeRemindStale(env, url); } catch {}   // 1시간 초과 점유 알림(조회 시 확인)
+  // 1시간 초과 점유 알림 — 매 조회마다 editing 을 훑으면 읽기 행 수가 커져서 5분에 한 번만 확인
+  if (Date.now() - LAST_STALE_CHECK > STALE_CHECK_MS) {
+    LAST_STALE_CHECK = Date.now();
+    try { await maybeRemindStale(env, url); } catch {}
+  }
+  // 버전은 반드시 데이터를 읽기 "전" 에 확인한다(그 사이 변경이 나면 다음 조회에서 잡히도록)
+  const ver = await getVer(env);
+  const cv = url.searchParams.get("v");
+  if (ver !== null && cv !== null && cv === ver) return json({ unchanged: true, v: ver, line });
   const allTables = (await env.DB.prepare("SELECT grp, table_name, memo FROM tables WHERE line=? ORDER BY grp, sort_order, table_name").bind(line).all()).results || [];
   const allEditing = (await env.DB.prepare("SELECT grp, table_name, user_email, user_name, started_at, note FROM editing WHERE line=?").bind(line).all()).results || [];
   const key = (g, n) => (g || "plan") + " " + n;
@@ -198,7 +225,7 @@ async function apiStatus(env, url) {
       groups.push({ key: g.key, label: g.label, kind: "dept", tables: rows });
     }
   }
-  return json({ line, lines: LINES, groups });
+  return json({ line, lines: LINES, groups, v: ver });
 }
 function rowOf(name, memo, e) {
   return {
@@ -222,6 +249,7 @@ async function apiStart(request, env, user, url) {
     "INSERT INTO editing(line,grp,table_name,user_email,user_name,started_at,note) VALUES(?,?,?,?,?,?,?) ON CONFLICT(line,grp,table_name) DO NOTHING"
   ).bind(line, grp, table, user.email, user.name, nowIso(), note).run();
   if (ins.meta.changes === 1) {
+    await bumpVer(env);
     await logHistory(env, line, grp, table, user.email, "start");
     await notify(env, url, `✏️ [시작] ${tag} ${table} · ${user.name} · ${hhmm()}`);
     return json({ ok: true });
@@ -242,6 +270,7 @@ async function apiFinish(request, env, user, url, admin) {
   if (row.user_email !== user.email && !admin)
     return json({ ok: false, error: `${row.user_name || row.user_email}님이 편집 중입니다. 본인 것만 종료할 수 있습니다.` }, 403);
   await env.DB.prepare("DELETE FROM editing WHERE line=? AND grp=? AND table_name=?").bind(line, grp, table).run();
+  await bumpVer(env);
   await logHistory(env, line, grp, table, user.email, "finish");
   await notify(env, url, `✅ [완료] (${lineLabel(line)}·${groupLabel(grp)}) ${table} · ${row.user_name || row.user_email} · 소요 ${humanDuration(row.started_at)}`);
   return json({ ok: true });
@@ -255,6 +284,7 @@ async function apiSetConfig(request, env) {
   const grp = normGroup(body.group);
   const k = "svn_repo_url_" + line + "_" + grp;
   if (typeof body.svn_repo_url === "string") await setSetting(env, k, body.svn_repo_url.trim());
+  await bumpVer(env);
   return json({ ok: true, svn_repo_url: await getSetting(env, k, "") });
 }
 async function apiTableAdd(request, env) {
@@ -265,6 +295,7 @@ async function apiTableAdd(request, env) {
   const max = await env.DB.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM tables").first();
   await env.DB.prepare("INSERT INTO tables(table_name,memo,sort_order) VALUES(?,?,?) ON CONFLICT(table_name) DO UPDATE SET memo=excluded.memo")
     .bind(name, memo, (max.m || 0) + 1).run();
+  await bumpVer(env);
   return json({ ok: true });
 }
 async function apiTableRemove(request, env) {
@@ -273,6 +304,7 @@ async function apiTableRemove(request, env) {
   if (!name) return json({ ok: false, error: "table_name 필수" }, 400);
   await env.DB.prepare("DELETE FROM tables WHERE table_name=?").bind(name).run();
   await env.DB.prepare("DELETE FROM editing WHERE table_name=?").bind(name).run();
+  await bumpVer(env);
   return json({ ok: true });
 }
 
@@ -289,6 +321,7 @@ async function apiFavAdd(request, env) {
   const max = await env.DB.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM favorites WHERE line=? AND dept=?").bind(line, dept).first();
   await env.DB.prepare("INSERT OR IGNORE INTO favorites(line,dept,src_grp,table_name,sort_order) VALUES(?,?,?,?,?)")
     .bind(line, dept, src, name, (max.m || 0) + 1).run();
+  await bumpVer(env);
   return json({ ok: true });
 }
 async function apiFavRemove(request, env) {
@@ -298,6 +331,7 @@ async function apiFavRemove(request, env) {
   const src = normGroup(body.src_grp);
   const name = (body.table_name || "").trim();
   await env.DB.prepare("DELETE FROM favorites WHERE line=? AND dept=? AND src_grp=? AND table_name=?").bind(line, dept, src, name).run();
+  await bumpVer(env);
   return json({ ok: true });
 }
 
@@ -322,6 +356,7 @@ async function apiTablesSync(request, env) {
     await env.DB.prepare("INSERT OR IGNORE INTO tables(line,grp,table_name,memo,sort_order) VALUES(?,?,?,?,?)").bind(line, grp, name, memo, i).run();
   }
   if (typeof body.svn_repo_url === "string") await setSetting(env, "svn_repo_url_" + line + "_" + grp, body.svn_repo_url.trim());
+  await bumpVer(env);
   return json({ ok: true, count: i, line: line, group: grp });
 }
 

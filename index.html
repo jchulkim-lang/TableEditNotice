@@ -87,6 +87,13 @@
 <script>
 const $=s=>document.querySelector(s);
 let ME=null, POLL=null, GROUPS_DATA=[], ACTIVE="plan", SVN_LOADED={}, SEARCH="";
+/* 폴링 절약: 상태 버전 / 마지막 조작 시각 / 현재 폴링 주기 */
+let STATE_VER=null, LAST_ACT=Date.now(), POLL_MS=0;
+const POLL_ACTIVE_MS=15000;   // 화면을 보고 있고 최근 조작이 있을 때
+const POLL_IDLE_MS=60000;     // 5분 이상 조작이 없을 때
+const IDLE_AFTER_MS=5*60*1000;
+const FULL_EVERY_MS=120000;  // 안전장치: 최소 2분에 한 번은 전체 데이터를 다시 받는다
+let LAST_FULL=0;
 let ACTIVE_LINE="trunk", LINES_DATA=[{key:"trunk",label:"Trunk"},{key:"branch",label:"Branch"}];
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
 function fmtName(name){
@@ -101,6 +108,14 @@ function fmtNameCell(name){ // 격자 셀용: 폴더는 빼고 파일명만(전�
   name=String(name||""); const s=name.lastIndexOf("/"); const file=s>=0?name.slice(s+1):name;
   let base=file,ext=""; const d=file.lastIndexOf("."); if(d>0){ base=file.slice(0,d); ext=file.slice(d); }
   return `<span class="fn">${esc(base)}</span><span class="ext">${esc(ext)}</span>`;
+}
+function elap(startIso){ // 경과시간을 브라우저에서 계산 (서버 재조회 없이도 갱신됨)
+  if(!startIso) return "-";
+  const secs=Math.max(0,Math.floor((Date.now()-Date.parse(startIso))/1000));
+  if(secs<60) return secs+"초";
+  const mins=Math.floor(secs/60);
+  if(mins<60) return mins+"분";
+  return Math.floor(mins/60)+"시간 "+(mins%60)+"분";
 }
 function toast(html){const t=$("#toast");t.innerHTML=html;t.classList.add("show");
   clearTimeout(toast._h);toast._h=setTimeout(()=>t.classList.remove("show"),4600);}
@@ -165,7 +180,7 @@ function renderLineSeg(){
   const el=$("#lineseg"); if(!el) return;
   el.innerHTML=LINES_DATA.map(l=> `<button class="${l.key===ACTIVE_LINE?('on '+l.key):''}" onclick="switchLine('${l.key}')">${esc(l.label)}</button>`).join("");
 }
-function switchLine(k){ if(k===ACTIVE_LINE) return; ACTIVE_LINE=k; SVN_LOADED={}; SEARCH=""; renderLineSeg(); refresh(); }
+function switchLine(k){ if(k===ACTIVE_LINE) return; ACTIVE_LINE=k; SVN_LOADED={}; SEARCH=""; STATE_VER=null; renderLineSeg(); refresh(true); }
 
 function groupKind(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.kind:'sync'; }
 function labelOf(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.label:k; }
@@ -175,8 +190,8 @@ function cellHtml(t){
   const sg=t.src_grp||ACTIVE;
   let cls="",badge="",btn="";
   if(!t.in_use){ badge=`<span class="badge-sm b-free">● 사용 가능</span>`; btn=`<button class="btn-sm primary" onclick="start('${tt}','${sg}')">시작</button>`; }
-  else if(t.user_email===ME.email){ cls="mine"; badge=`<span class="badge-sm b-me" title="내가 사용 중 · 경과 ${t.elapsed}">👤 ${esc(t.user_name)}</span>`; btn=`<button class="btn-sm" onclick="finish('${tt}','${sg}')">종료</button>`; }
-  else { cls="busy"; badge=`<span class="badge-sm b-busy" title="사용 중 · 경과 ${t.elapsed}">👤 ${esc(t.user_name)}</span>`; btn = ME.is_admin?`<button class="btn-sm" onclick="finish('${tt}','${sg}')">강제종료</button>`:``; }
+  else if(t.user_email===ME.email){ cls="mine"; badge=`<span class="badge-sm b-me" title="내가 사용 중 · 경과 ${elap(t.started_at)}">👤 ${esc(t.user_name)}</span>`; btn=`<button class="btn-sm" onclick="finish('${tt}','${sg}')">종료</button>`; }
+  else { cls="busy"; badge=`<span class="badge-sm b-busy" title="사용 중 · 경과 ${elap(t.started_at)}">👤 ${esc(t.user_name)}</span>`; btn = ME.is_admin?`<button class="btn-sm" onclick="finish('${tt}','${sg}')">강제종료</button>`:``; }
   const rm = (groupKind(ACTIVE)==='dept') ? `<button class="btn-x" title="이 탭에서 빼기" onclick="removeFav('${tt}','${sg}')">✕</button>` : "";
   return `<div class="cell ${cls}"><div class="top"><div class="nm" title="${esc(t.table)}">${fmtNameCell(t.table)}</div>${rm}</div><div class="bot">${badge}${btn}</div></div>`;
 }
@@ -269,11 +284,17 @@ function renderDynamic(){
   if(ME.is_admin){ const el=$("#svn"); if(el && !SVN_LOADED[ACTIVE]){ el.value=g.svn_repo_url||""; SVN_LOADED[ACTIVE]=true; } }
 }
 
-async function refresh(){
+async function refresh(force){
   if(!ME) return;
-  const r=await fetch("/api/status?line="+encodeURIComponent(ACTIVE_LINE));
+  // v= 현재 알고 있는 상태 버전. 서버 데이터가 그대로면 unchanged 만 돌아와 D1 조회를 건너뜁니다.
+  let q="/api/status?line="+encodeURIComponent(ACTIVE_LINE);
+  if(STATE_VER!==null && !force && (Date.now()-LAST_FULL < FULL_EVERY_MS)) q+="&v="+encodeURIComponent(STATE_VER);
+  const r=await fetch(q);
   if(r.status===401){ ME=null; renderLogin(); return; }
   const d=await r.json();
+  if(d.unchanged){ renderDynamic(); return; }   // 경과시간만 로컬로 갱신
+  if(d.v!==undefined) STATE_VER=d.v;
+  LAST_FULL=Date.now();
   if(d.lines) LINES_DATA=d.lines;
   if(d.line) ACTIVE_LINE=d.line;
   GROUPS_DATA=d.groups||[];
@@ -304,8 +325,41 @@ async function saveSvn(){
 }
 async function logout(){ await fetch("/api/logout"); ME=null; SVN_LOADED={}; if(window.google&&google.accounts) google.accounts.id.disableAutoSelect(); renderLogin(); }
 
-function startPoll(){ stopPoll(); POLL=setInterval(refresh,3000); }
-function stopPoll(){ if(POLL) clearInterval(POLL); POLL=null; }
+/* ---------- 폴링 (요청 수 절약) ----------
+   · 탭이 보이지 않으면 아예 멈춤 (다른 탭/최소화/자리 비움)
+   · 최근 5분간 조작이 없으면 60초 주기, 조작 중이면 15초 주기
+   · 탭으로 돌아오거나 화면을 조작하면 즉시 한 번 갱신                */
+function pollTarget(){
+  if(document.hidden) return 0;
+  return (Date.now()-LAST_ACT > IDLE_AFTER_MS) ? POLL_IDLE_MS : POLL_ACTIVE_MS;
+}
+function applyPoll(){
+  const ms=pollTarget();
+  if(ms===POLL_MS) return;
+  POLL_MS=ms;
+  if(POLL!==null){ clearInterval(POLL); POLL=null; }
+  if(ms>0) POLL=setInterval(()=>{ applyPoll(); refresh(); }, ms);
+}
+function startPoll(){
+  stopPoll();
+  LAST_ACT=Date.now();
+  applyPoll();
+  if(!startPoll._bound){
+    startPoll._bound=true;
+    document.addEventListener("visibilitychange",()=>{
+      if(document.hidden){ POLL_MS=-1; applyPoll(); }
+      else { LAST_ACT=Date.now(); applyPoll(); if(ME) refresh(); }
+    });
+    ["pointerdown","keydown","wheel","touchstart"].forEach(ev=>{
+      window.addEventListener(ev,()=>{
+        const wasIdle = Date.now()-LAST_ACT > IDLE_AFTER_MS;
+        LAST_ACT=Date.now();
+        if(wasIdle){ applyPoll(); if(ME) refresh(); }
+      },{passive:true});
+    });
+  }
+}
+function stopPoll(){ if(POLL!==null) clearInterval(POLL); POLL=null; POLL_MS=0; }
 boot();
 </script>
 </body></html>
