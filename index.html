@@ -47,6 +47,8 @@
  .lineseg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel2)}
  .lineseg button{border:none;background:transparent;color:var(--muted);font-weight:800;font-size:13px;padding:7px 18px;cursor:pointer}
  .lineseg button.on.trunk{background:var(--accent);color:var(--accent-ink)} .lineseg button.on.branch{background:#ff9f43;color:#3a2400}
+ .manual-dot{font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;white-space:nowrap;
+  background:#2a2410;border:1px solid #6b5a1f;color:#e8cf7a}
  .addcard{display:flex;align-items:center;justify-content:center;min-height:66px;cursor:pointer;border-style:dashed;color:var(--muted)}
  .addcard:hover{border-color:var(--accent);color:var(--accent)} .addcard .plus{font-size:32px;font-weight:700;line-height:1}
  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;place-items:center;z-index:60}
@@ -83,6 +85,25 @@
     <input id="pickerSearch" placeholder="검색…" style="flex:1;min-width:120px" oninput="renderPicker()" autocomplete="off">
     <button class="btn" onclick="closePicker()">닫기</button></div>
   <div class="modal-list" id="pickerList"></div>
+</div></div>
+<div class="modal" id="adder"><div class="modal-box">
+  <div class="modal-head"><h2 id="adderTitle">테이블 추가</h2>
+    <button class="btn" onclick="closeAdd()">닫기</button></div>
+  <div style="padding:16px 16px 18px;display:flex;flex-direction:column;gap:10px">
+    <label style="font-size:12px;color:var(--muted)">파일명 <span style="opacity:.7">(확장자를 빼면 .xlsx 로 들어갑니다)</span></label>
+    <input id="addName" placeholder="예: monster_table.xlsx" autocomplete="off" onkeydown="if(event.key==='Enter')submitAdd()">
+    <label style="font-size:12px;color:var(--muted)">메모 <span style="opacity:.7">(선택)</span></label>
+    <input id="addMemo" placeholder="예: 신규 보스 스탯" autocomplete="off" onkeydown="if(event.key==='Enter')submitAdd()">
+    <div id="addMsg" style="font-size:12px;color:var(--busy);min-height:16px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeAdd()">취소</button>
+      <button class="btn primary" id="addBtn" onclick="submitAdd()">추가</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);line-height:1.6;border-top:1px solid var(--line);padding-top:10px">
+      여기서 추가한 테이블은 <b>동기화(bat)를 돌려도 지워지지 않습니다.</b><br>
+      나중에 같은 이름이 실제로 SVN 에 올라오면 자동으로 정규 항목으로 바뀝니다.
+    </div>
+  </div>
 </div></div>
 <script>
 const $=s=>document.querySelector(s);
@@ -184,6 +205,7 @@ function switchLine(k){ if(k===ACTIVE_LINE) return; ACTIVE_LINE=k; SVN_LOADED={}
 
 function groupKind(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.kind:'sync'; }
 function labelOf(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.label:k; }
+function lineLabelOf(k){ const l=LINES_DATA.find(x=>x.key===k); return l?l.label:k; }
 
 function cellHtml(t){
   const tt=esc(t.table).replace(/'/g,"\\'");
@@ -192,8 +214,44 @@ function cellHtml(t){
   if(!t.in_use){ badge=`<span class="badge-sm b-free">● 사용 가능</span>`; btn=`<button class="btn-sm primary" onclick="start('${tt}','${sg}')">시작</button>`; }
   else if(t.user_email===ME.email){ cls="mine"; badge=`<span class="badge-sm b-me" title="내가 사용 중 · 경과 ${elap(t.started_at)}">👤 ${esc(t.user_name)}</span>`; btn=`<button class="btn-sm" onclick="finish('${tt}','${sg}')">종료</button>`; }
   else { cls="busy"; badge=`<span class="badge-sm b-busy" title="사용 중 · 경과 ${elap(t.started_at)}">👤 ${esc(t.user_name)}</span>`; btn = ME.is_admin?`<button class="btn-sm" onclick="finish('${tt}','${sg}')">강제종료</button>`:``; }
-  const rm = (groupKind(ACTIVE)==='dept') ? `<button class="btn-x" title="이 탭에서 빼기" onclick="removeFav('${tt}','${sg}')">✕</button>` : "";
-  return `<div class="cell ${cls}"><div class="top"><div class="nm" title="${esc(t.table)}">${fmtNameCell(t.table)}</div>${rm}</div><div class="bot">${badge}${btn}</div></div>`;
+  let rm = "";
+  if(groupKind(ACTIVE)==='dept') rm = `<button class="btn-x" title="이 탭에서 빼기" onclick="removeFav('${tt}','${sg}')">✕</button>`;
+  else if(t.manual) rm = `<button class="btn-x" title="보드에서 직접 추가한 테이블 · 목록에서 삭제" onclick="removeTable('${tt}','${sg}')">✕</button>`;
+  const manualTag = t.manual ? `<span class="manual-dot" title="보드에서 직접 추가한 테이블(동기화해도 유지됨)">수동</span>` : "";
+  return `<div class="cell ${cls}"><div class="top"><div class="nm" title="${esc(t.table)}">${fmtNameCell(t.table)}</div>${manualTag}${rm}</div><div class="bot">${badge}${btn}</div></div>`;
+}
+
+/* ---------- 기획/개발 탭: 테이블 직접 추가 ---------- */
+function openAdd(){
+  const n=$("#addName"), m=$("#addMemo"), msg=$("#addMsg");
+  if(n) n.value=""; if(m) m.value=""; if(msg) msg.textContent="";
+  const tt=$("#adderTitle"); if(tt) tt.textContent=`테이블 추가 · ${lineLabelOf(ACTIVE_LINE)} · ${labelOf(ACTIVE)}`;
+  $("#adder").classList.add("show");
+  setTimeout(()=>{ if($("#addName")) $("#addName").focus(); },30);
+}
+function closeAdd(){ $("#adder").classList.remove("show"); }
+async function submitAdd(){
+  const btn=$("#addBtn"), msg=$("#addMsg");
+  const name=($("#addName").value||"").trim();
+  const memo=($("#addMemo").value||"").trim();
+  if(!name){ msg.textContent="파일명을 입력하세요."; return; }
+  btn.disabled=true; msg.textContent="추가 중…";
+  try{
+    const r=await fetch("/api/tables/add",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({table_name:name,memo,group:ACTIVE,line:ACTIVE_LINE})});
+    const d=await r.json();
+    if(!r.ok||!d.ok){ msg.textContent=d.error||"추가 실패"; return; }
+    closeAdd(); STATE_VER=null; await refresh(true);
+  } catch(e){ msg.textContent="네트워크 오류로 추가하지 못했습니다."; }
+  finally{ btn.disabled=false; }
+}
+async function removeTable(table, grp){
+  if(!confirm(`'${table}' 을(를) 목록에서 지울까요?\n보드에서 직접 추가한 항목만 지워집니다.`)) return;
+  const r=await fetch("/api/tables/remove",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({table_name:table,group:grp||ACTIVE,line:ACTIVE_LINE})});
+  const d=await r.json();
+  if(!r.ok||!d.ok) toast(esc(d.error||"삭제 실패"));
+  STATE_VER=null; refresh(true);
 }
 
 /* ---------- 부서 탭: 파일 담기 모달 ---------- */
@@ -277,6 +335,7 @@ function renderDynamic(){
   if(grid){
     let inner = list.map(cellHtml).join("");
     if(groupKind(ACTIVE)==='dept') inner += `<div class="cell addcard" onclick="openPicker()" title="파일 담기"><div class="plus">+</div></div>`;
+    else inner += `<div class="cell addcard" onclick="openAdd()" title="테이블 직접 추가"><div class="plus">+</div></div>`;
     grid.innerHTML = inner || `<div class="s-empty" style="padding:10px 4px">검색 결과가 없습니다</div>`;
   }
   const info=$("#searchInfo"); if(info) info.textContent = q ? `${list.length} / ${g.tables.length}` : `${g.tables.length}개`;

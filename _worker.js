@@ -60,6 +60,8 @@ const INDEX_HTML = `<!DOCTYPE html>
  .lineseg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel2)}
  .lineseg button{border:none;background:transparent;color:var(--muted);font-weight:800;font-size:13px;padding:7px 18px;cursor:pointer}
  .lineseg button.on.trunk{background:var(--accent);color:var(--accent-ink)} .lineseg button.on.branch{background:#ff9f43;color:#3a2400}
+ .manual-dot{font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;white-space:nowrap;
+  background:#2a2410;border:1px solid #6b5a1f;color:#e8cf7a}
  .addcard{display:flex;align-items:center;justify-content:center;min-height:66px;cursor:pointer;border-style:dashed;color:var(--muted)}
  .addcard:hover{border-color:var(--accent);color:var(--accent)} .addcard .plus{font-size:32px;font-weight:700;line-height:1}
  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;place-items:center;z-index:60}
@@ -96,6 +98,25 @@ const INDEX_HTML = `<!DOCTYPE html>
     <input id="pickerSearch" placeholder="검색…" style="flex:1;min-width:120px" oninput="renderPicker()" autocomplete="off">
     <button class="btn" onclick="closePicker()">닫기</button></div>
   <div class="modal-list" id="pickerList"></div>
+</div></div>
+<div class="modal" id="adder"><div class="modal-box">
+  <div class="modal-head"><h2 id="adderTitle">테이블 추가</h2>
+    <button class="btn" onclick="closeAdd()">닫기</button></div>
+  <div style="padding:16px 16px 18px;display:flex;flex-direction:column;gap:10px">
+    <label style="font-size:12px;color:var(--muted)">파일명 <span style="opacity:.7">(확장자를 빼면 .xlsx 로 들어갑니다)</span></label>
+    <input id="addName" placeholder="예: monster_table.xlsx" autocomplete="off" onkeydown="if(event.key==='Enter')submitAdd()">
+    <label style="font-size:12px;color:var(--muted)">메모 <span style="opacity:.7">(선택)</span></label>
+    <input id="addMemo" placeholder="예: 신규 보스 스탯" autocomplete="off" onkeydown="if(event.key==='Enter')submitAdd()">
+    <div id="addMsg" style="font-size:12px;color:var(--busy);min-height:16px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeAdd()">취소</button>
+      <button class="btn primary" id="addBtn" onclick="submitAdd()">추가</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);line-height:1.6;border-top:1px solid var(--line);padding-top:10px">
+      여기서 추가한 테이블은 <b>동기화(bat)를 돌려도 지워지지 않습니다.</b><br>
+      나중에 같은 이름이 실제로 SVN 에 올라오면 자동으로 정규 항목으로 바뀝니다.
+    </div>
+  </div>
 </div></div>
 <script>
 const $=s=>document.querySelector(s);
@@ -197,6 +218,7 @@ function switchLine(k){ if(k===ACTIVE_LINE) return; ACTIVE_LINE=k; SVN_LOADED={}
 
 function groupKind(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.kind:'sync'; }
 function labelOf(k){ const g=GROUPS_DATA.find(x=>x.key===k); return g?g.label:k; }
+function lineLabelOf(k){ const l=LINES_DATA.find(x=>x.key===k); return l?l.label:k; }
 
 function cellHtml(t){
   const tt=esc(t.table).replace(/'/g,"\\\\'");
@@ -205,8 +227,44 @@ function cellHtml(t){
   if(!t.in_use){ badge=\`<span class="badge-sm b-free">● 사용 가능</span>\`; btn=\`<button class="btn-sm primary" onclick="start('\${tt}','\${sg}')">시작</button>\`; }
   else if(t.user_email===ME.email){ cls="mine"; badge=\`<span class="badge-sm b-me" title="내가 사용 중 · 경과 \${elap(t.started_at)}">👤 \${esc(t.user_name)}</span>\`; btn=\`<button class="btn-sm" onclick="finish('\${tt}','\${sg}')">종료</button>\`; }
   else { cls="busy"; badge=\`<span class="badge-sm b-busy" title="사용 중 · 경과 \${elap(t.started_at)}">👤 \${esc(t.user_name)}</span>\`; btn = ME.is_admin?\`<button class="btn-sm" onclick="finish('\${tt}','\${sg}')">강제종료</button>\`:\`\`; }
-  const rm = (groupKind(ACTIVE)==='dept') ? \`<button class="btn-x" title="이 탭에서 빼기" onclick="removeFav('\${tt}','\${sg}')">✕</button>\` : "";
-  return \`<div class="cell \${cls}"><div class="top"><div class="nm" title="\${esc(t.table)}">\${fmtNameCell(t.table)}</div>\${rm}</div><div class="bot">\${badge}\${btn}</div></div>\`;
+  let rm = "";
+  if(groupKind(ACTIVE)==='dept') rm = \`<button class="btn-x" title="이 탭에서 빼기" onclick="removeFav('\${tt}','\${sg}')">✕</button>\`;
+  else if(t.manual) rm = \`<button class="btn-x" title="보드에서 직접 추가한 테이블 · 목록에서 삭제" onclick="removeTable('\${tt}','\${sg}')">✕</button>\`;
+  const manualTag = t.manual ? \`<span class="manual-dot" title="보드에서 직접 추가한 테이블(동기화해도 유지됨)">수동</span>\` : "";
+  return \`<div class="cell \${cls}"><div class="top"><div class="nm" title="\${esc(t.table)}">\${fmtNameCell(t.table)}</div>\${manualTag}\${rm}</div><div class="bot">\${badge}\${btn}</div></div>\`;
+}
+
+/* ---------- 기획/개발 탭: 테이블 직접 추가 ---------- */
+function openAdd(){
+  const n=$("#addName"), m=$("#addMemo"), msg=$("#addMsg");
+  if(n) n.value=""; if(m) m.value=""; if(msg) msg.textContent="";
+  const tt=$("#adderTitle"); if(tt) tt.textContent=\`테이블 추가 · \${lineLabelOf(ACTIVE_LINE)} · \${labelOf(ACTIVE)}\`;
+  $("#adder").classList.add("show");
+  setTimeout(()=>{ if($("#addName")) $("#addName").focus(); },30);
+}
+function closeAdd(){ $("#adder").classList.remove("show"); }
+async function submitAdd(){
+  const btn=$("#addBtn"), msg=$("#addMsg");
+  const name=($("#addName").value||"").trim();
+  const memo=($("#addMemo").value||"").trim();
+  if(!name){ msg.textContent="파일명을 입력하세요."; return; }
+  btn.disabled=true; msg.textContent="추가 중…";
+  try{
+    const r=await fetch("/api/tables/add",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({table_name:name,memo,group:ACTIVE,line:ACTIVE_LINE})});
+    const d=await r.json();
+    if(!r.ok||!d.ok){ msg.textContent=d.error||"추가 실패"; return; }
+    closeAdd(); STATE_VER=null; await refresh(true);
+  } catch(e){ msg.textContent="네트워크 오류로 추가하지 못했습니다."; }
+  finally{ btn.disabled=false; }
+}
+async function removeTable(table, grp){
+  if(!confirm(\`'\${table}' 을(를) 목록에서 지울까요?\\n보드에서 직접 추가한 항목만 지워집니다.\`)) return;
+  const r=await fetch("/api/tables/remove",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({table_name:table,group:grp||ACTIVE,line:ACTIVE_LINE})});
+  const d=await r.json();
+  if(!r.ok||!d.ok) toast(esc(d.error||"삭제 실패"));
+  STATE_VER=null; refresh(true);
 }
 
 /* ---------- 부서 탭: 파일 담기 모달 ---------- */
@@ -290,6 +348,7 @@ function renderDynamic(){
   if(grid){
     let inner = list.map(cellHtml).join("");
     if(groupKind(ACTIVE)==='dept') inner += \`<div class="cell addcard" onclick="openPicker()" title="파일 담기"><div class="plus">+</div></div>\`;
+    else inner += \`<div class="cell addcard" onclick="openAdd()" title="테이블 직접 추가"><div class="plus">+</div></div>\`;
     grid.innerHTML = inner || \`<div class="s-empty" style="padding:10px 4px">검색 결과가 없습니다</div>\`;
   }
   const info=$("#searchInfo"); if(info) info.textContent = q ? \`\${list.length} / \${g.tables.length}\` : \`\${g.tables.length}개\`;
@@ -405,18 +464,15 @@ export default {
         if (path === "/api/fav/add" && request.method === "POST") return apiFavAdd(request, env);
         if (path === "/api/fav/remove" && request.method === "POST") return apiFavRemove(request, env);
 
+        // ---- 테이블 직접 추가/삭제(로그인 사용자면 누구나) ----
+        // 추가분은 manual=1 로 표시되고, 삭제는 그 manual 행에만 허용된다.
+        if (path === "/api/tables/add" && request.method === "POST") return apiTableAdd(request, env, user, url);
+        if (path === "/api/tables/remove" && request.method === "POST") return apiTableRemove(request, env, user, url);
+
         // ---- 관리자 전용 ----
         if (path === "/api/config" && request.method === "POST") {
           if (!admin) return json({ ok: false, error: "관리자만 변경할 수 있습니다." }, 403);
           return apiSetConfig(request, env);
-        }
-        if (path === "/api/tables/add" && request.method === "POST") {
-          if (!admin) return json({ ok: false, error: "관리자만 변경할 수 있습니다." }, 403);
-          return apiTableAdd(request, env);
-        }
-        if (path === "/api/tables/remove" && request.method === "POST") {
-          if (!admin) return json({ ok: false, error: "관리자만 변경할 수 있습니다." }, 403);
-          return apiTableRemove(request, env);
         }
         return json({ ok: false, error: "not found" }, 404);
       }
@@ -557,6 +613,14 @@ async function bumpVer(env) {
   } catch {}
 }
 
+/* 수동 추가 표시용 컬럼. 기존 DB 에도 자동으로 생기도록 쓰기 시점에 한 번 시도한다. */
+let MANUAL_READY = false;
+async function ensureManualColumn(env) {
+  if (MANUAL_READY) return;
+  try { await env.DB.prepare("ALTER TABLE tables ADD COLUMN manual INTEGER DEFAULT 0").run(); } catch {}
+  MANUAL_READY = true;
+}
+
 async function apiStatus(env, url) {
   const line = normLine(url.searchParams.get("line"));
   // 1시간 초과 점유 알림 — 매 조회마다 editing 을 훑으면 읽기 행 수가 커져서 5분에 한 번만 확인
@@ -568,11 +632,16 @@ async function apiStatus(env, url) {
   const ver = await getVer(env);
   const cv = url.searchParams.get("v");
   if (ver !== null && cv !== null && cv === ver) return json({ unchanged: true, v: ver, line });
-  const allTables = (await env.DB.prepare("SELECT grp, table_name, memo FROM tables WHERE line=? ORDER BY grp, sort_order, table_name").bind(line).all()).results || [];
+  const Q_T = "SELECT grp, table_name, memo, manual FROM tables WHERE line=? ORDER BY grp, sort_order, table_name";
+  const Q_T_OLD = "SELECT grp, table_name, memo FROM tables WHERE line=? ORDER BY grp, sort_order, table_name";
+  let allTables;
+  try { allTables = (await env.DB.prepare(Q_T).bind(line).all()).results || []; }
+  catch { allTables = (await env.DB.prepare(Q_T_OLD).bind(line).all()).results || []; }   // manual 컬럼 생기기 전
   const allEditing = (await env.DB.prepare("SELECT grp, table_name, user_email, user_name, started_at, note FROM editing WHERE line=?").bind(line).all()).results || [];
   const key = (g, n) => (g || "plan") + " " + n;
   const emap = {}; for (const e of allEditing) emap[key(e.grp, e.table_name)] = e;
   const tmemo = {}; for (const t of allTables) tmemo[key(t.grp, t.table_name)] = t.memo || "";
+  const tman = {}; for (const t of allTables) tman[key(t.grp, t.table_name)] = t.manual ? 1 : 0;
   let favs = [];
   try { favs = (await env.DB.prepare("SELECT dept, src_grp, table_name, sort_order FROM favorites WHERE line=? ORDER BY dept, sort_order, table_name").bind(line).all()).results || []; } catch {}
   const groups = [];
@@ -581,12 +650,12 @@ async function apiStatus(env, url) {
       const svn = await getSetting(env, "svn_repo_url_" + line + "_" + g.key, "");
       const tabs = allTables.filter(t => (t.grp || "plan") === g.key);
       const names = new Set(tabs.map(t => t.table_name));
-      const rows = tabs.map(t => ({ ...rowOf(t.table_name, t.memo, emap[key(g.key, t.table_name)]), src_grp: g.key }));
+      const rows = tabs.map(t => ({ ...rowOf(t.table_name, t.memo, emap[key(g.key, t.table_name)]), src_grp: g.key, manual: t.manual ? 1 : 0 }));
       for (const e of allEditing) if ((e.grp || "plan") === g.key && !names.has(e.table_name)) rows.push({ ...rowOf(e.table_name, "", e), src_grp: g.key });
       groups.push({ key: g.key, label: g.label, kind: "sync", svn_repo_url: svn, tables: rows });
     } else {
       const items = favs.filter(f => f.dept === g.key);
-      const rows = items.map(f => ({ ...rowOf(f.table_name, tmemo[key(f.src_grp, f.table_name)] || "", emap[key(f.src_grp, f.table_name)]), src_grp: f.src_grp }));
+      const rows = items.map(f => ({ ...rowOf(f.table_name, tmemo[key(f.src_grp, f.table_name)] || "", emap[key(f.src_grp, f.table_name)]), src_grp: f.src_grp, manual: tman[key(f.src_grp, f.table_name)] || 0 }));
       groups.push({ key: g.key, label: g.label, kind: "dept", tables: rows });
     }
   }
@@ -652,24 +721,62 @@ async function apiSetConfig(request, env) {
   await bumpVer(env);
   return json({ ok: true, svn_repo_url: await getSetting(env, k, "") });
 }
-async function apiTableAdd(request, env) {
-  const body = await request.json().catch(() => ({}));
-  const name = (body.table_name || "").trim();
-  const memo = (body.memo || "").trim();
-  if (!name) return json({ ok: false, error: "table_name 필수" }, 400);
-  const max = await env.DB.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM tables").first();
-  await env.DB.prepare("INSERT INTO tables(table_name,memo,sort_order) VALUES(?,?,?) ON CONFLICT(table_name) DO UPDATE SET memo=excluded.memo")
-    .bind(name, memo, (max.m || 0) + 1).run();
-  await bumpVer(env);
-  return json({ ok: true });
+/* 보드에서 직접 추가한 테이블은 manual=1 로 표시한다.
+   동기화(bat)는 manual=0 인 행만 지우므로 수동 추가분은 살아남는다. */
+function normTableName(raw) {
+  let name = String(raw || "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!name) return { error: "테이블 이름을 입력하세요." };
+  if (name.length > 200) return { error: "이름이 너무 깁니다." };
+  if (/[\x00-\x1f]/.test(name)) return { error: "사용할 수 없는 문자가 있습니다." };
+  const dot = name.lastIndexOf(".");
+  const slash = name.lastIndexOf("/");
+  if (dot <= slash) name += ".xlsx";                      // 확장자가 없으면 .xlsx 로 간주
+  else if (!/\.(xlsx|xlsm)$/i.test(name)) return { error: "xlsx 또는 xlsm 파일만 추가할 수 있습니다." };
+  return { name };
 }
-async function apiTableRemove(request, env) {
+
+async function apiTableAdd(request, env, user, url) {
   const body = await request.json().catch(() => ({}));
+  const line = normLine(body.line);
+  const grp = normGroup(body.group);
+  if (!isSyncGroup(grp)) return json({ ok: false, error: "기획/개발 탭에만 추가할 수 있습니다." }, 400);
+  const chk = normTableName(body.table_name);
+  if (chk.error) return json({ ok: false, error: chk.error }, 400);
+  const name = chk.name;
+  const memo = (body.memo || "").trim().slice(0, 200);
+
+  await ensureManualColumn(env);
+  const dup = await env.DB.prepare("SELECT table_name FROM tables WHERE line=? AND grp=? AND table_name=?").bind(line, grp, name).first();
+  if (dup) return json({ ok: false, error: `이미 목록에 있습니다: ${name}` }, 409);
+
+  const max = await env.DB.prepare("SELECT COALESCE(MAX(sort_order),0) AS m FROM tables WHERE line=? AND grp=?").bind(line, grp).first();
+  await env.DB.prepare("INSERT INTO tables(line,grp,table_name,memo,sort_order,manual) VALUES(?,?,?,?,?,1)")
+    .bind(line, grp, name, memo, (max && max.m || 0) + 1).run();
+  await bumpVer(env);
+  await logHistory(env, line, grp, name, user.email, "table_add");
+  await notify(env, url, `➕ [테이블 추가] (${lineLabel(line)}·${groupLabel(grp)}) ${name} · ${user.name}`);
+  return json({ ok: true, table_name: name });
+}
+
+async function apiTableRemove(request, env, user, url) {
+  const body = await request.json().catch(() => ({}));
+  const line = normLine(body.line);
+  const grp = normGroup(body.group);
   const name = (body.table_name || "").trim();
   if (!name) return json({ ok: false, error: "table_name 필수" }, 400);
-  await env.DB.prepare("DELETE FROM tables WHERE table_name=?").bind(name).run();
-  await env.DB.prepare("DELETE FROM editing WHERE table_name=?").bind(name).run();
+
+  await ensureManualColumn(env);
+  const row = await env.DB.prepare("SELECT table_name, manual FROM tables WHERE line=? AND grp=? AND table_name=?").bind(line, grp, name).first();
+  if (!row) return json({ ok: false, error: "목록에 없는 테이블입니다." }, 404);
+  if (!row.manual) return json({ ok: false, error: "SVN 동기화로 들어온 테이블은 보드에서 지울 수 없습니다." }, 403);
+
+  const busy = await env.DB.prepare("SELECT user_name, user_email FROM editing WHERE line=? AND grp=? AND table_name=?").bind(line, grp, name).first();
+  if (busy) return json({ ok: false, error: `${busy.user_name || busy.user_email}님이 사용 중이라 지울 수 없습니다.` }, 409);
+
+  await env.DB.prepare("DELETE FROM tables WHERE line=? AND grp=? AND table_name=?").bind(line, grp, name).run();
+  await env.DB.prepare("DELETE FROM favorites WHERE line=? AND src_grp=? AND table_name=?").bind(line, grp, name).run();
   await bumpVer(env);
+  await logHistory(env, line, grp, name, user.email, "table_remove");
   return json({ ok: true });
 }
 
@@ -711,14 +818,17 @@ async function apiTablesSync(request, env) {
   const line = normLine(body.line);
   const grp = normGroup(body.group);
   // 해당 라인+그룹(탭)의 목록만 교체
-  await env.DB.prepare("DELETE FROM tables WHERE line=? AND grp=?").bind(line, grp).run();
+  await ensureManualColumn(env);
+  // 보드에서 직접 추가한 행(manual=1)은 남기고, 이전 동기화분만 지운다
+  await env.DB.prepare("DELETE FROM tables WHERE line=? AND grp=? AND COALESCE(manual,0)=0").bind(line, grp).run();
   let i = 0;
   for (const it of items) {
     const name = typeof it === "string" ? it : (it && it.table_name);
     const memo = typeof it === "string" ? "" : ((it && it.memo) || "");
     if (!name) continue;
     i++;
-    await env.DB.prepare("INSERT OR IGNORE INTO tables(line,grp,table_name,memo,sort_order) VALUES(?,?,?,?,?)").bind(line, grp, name, memo, i).run();
+    // 같은 이름을 미리 수동 추가해 뒀다면 정규(SVN) 항목으로 승격시킨다
+    await env.DB.prepare("INSERT INTO tables(line,grp,table_name,memo,sort_order,manual) VALUES(?,?,?,?,?,0) ON CONFLICT(line,grp,table_name) DO UPDATE SET sort_order=excluded.sort_order, manual=0").bind(line, grp, name, memo, i).run();
   }
   if (typeof body.svn_repo_url === "string") await setSetting(env, "svn_repo_url_" + line + "_" + grp, body.svn_repo_url.trim());
   await bumpVer(env);
